@@ -1,0 +1,34 @@
+# File ausiliari e log LaTeX
+*.aux
+*.bbl
+*.bcf
+*.blg
+*.fdb_latexmk
+*.fls
+*.glg
+*.glo
+*.gls
+*.idx
+*.ilg
+*.ind
+*.lof
+*.log
+*.lot
+*.nav
+*.out
+*.run.xml
+*.snm
+*.synctex.gz
+*.toc
+*.vrb
+*.xdv
+
+# File di backup ed editor
+*~
+*.swp
+.DS_Store
+Thumbs.db
+.vscode/
+
+# PDF compilato (scommenta se vuoi versionare solo i sorgenti .tex)
+# *.pdf

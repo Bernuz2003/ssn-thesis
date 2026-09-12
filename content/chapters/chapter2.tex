@@ -1,0 +1,1859 @@
+\chapter{Dalla visione event-based agli Spiking Transformer temporali: fondamenti e stato dell’arte}
+\label{chap:fondamenti_stato_arte}
+
+
+% ==============================================================================
+%  Rappresentazione dell’informazione nelle event camera
+% ==============================================================================
+
+\section{Rappresentazione dell’informazione nelle event camera}
+\label{sec:rappresentazione_event_camera}
+
+Comprendere come un modello neurale elabori un flusso neuromorfico richiede innanzitutto di chiarire che cosa venga effettivamente misurato dal sensore e in quale forma tale misura arrivi alla rete. Questo passaggio è meno banale di quanto possa sembrare. Nel caso di un'immagine convenzionale, sensore e rappresentazione utilizzata dall'algoritmo sono quasi naturalmente allineati: il dispositivo acquisisce una matrice di intensità e il modello riceve, dopo le opportune trasformazioni numeriche, una matrice della stessa natura. Con una event camera questa corrispondenza viene meno. Il sensore produce un flusso asincrono e irregolare di variazioni locali; la rete neurale, soprattutto quando viene addestrata su hardware convenzionale, lavora spesso su strutture discrete e di dimensione regolare. Tra acquisizione e modello compare quindi un passaggio intermedio --- la rappresentazione degli eventi --- che determina quali proprietà del segnale originario vengano preservate, aggregate o eliminate.
+
+È utile partire dal singolo pixel.
+
+Una telecamera convenzionale misura periodicamente un valore proporzionale all'intensità luminosa incidente. Una event camera non comunica invece il valore assoluto dell'intensità a ogni istante: segnala che tale intensità è cambiata in misura sufficientemente significativa rispetto all'ultima variazione registrata. Nel modello comunemente utilizzato per descriverne il funzionamento, ciascun pixel monitora in modo continuo la luminanza logaritmica
+\begin{equation}
+\label{eq:luminanza_logaritmica}
+L(x,y,t) = \log I(x,y,t),
+\end{equation}
+dove $I(x,y,t)$ rappresenta l'intensità luminosa misurata nella posizione $(x,y)$ al tempo $t$. Quando la differenza rispetto al precedente valore di riferimento supera una soglia di contrasto, viene prodotto un evento~\cite{gallego2022event, lichtsteiner2008dvs}. Il Dynamic Vision Sensor descritto da Lichtsteiner, Posch e Delbruck costituisce uno dei riferimenti fondativi di questo paradigma: ogni pixel quantizza autonomamente e in tempo continuo variazioni relative dell'intensità, producendo in uscita un flusso asincrono di indirizzi digitali~\cite{lichtsteiner2008dvs}.
+
+Indicando con $t_i$ l'istante del nuovo evento e con $t_i^{-}$ l'istante rispetto al quale il pixel mantiene il proprio riferimento, il principio ideale di funzionamento può essere espresso come
+\begin{equation}
+\label{eq:differenza_luminanza}
+\Delta L_i = L(x_i,y_i,t_i) - L(x_i,y_i,t_i^{-}).
+\end{equation}
+L'evento viene generato quando
+\begin{equation*}
+\Delta L_i \geq C_{+}
+\end{equation*}
+oppure quando
+\begin{equation}
+\label{eq:condizione_soglia_polarita}
+\Delta L_i \leq -C_{-},
+\end{equation}
+dove $C_{+}$ e $C_{-}$ rappresentano rispettivamente le soglie associate a un incremento e a una diminuzione della luminanza. Nel modello semplificato si assume spesso $C_{+}=C_{-}=C$, ma in un sensore reale le due soglie non sono necessariamente identiche e presentano inoltre una certa variabilità da pixel a pixel.
+
+Un evento viene quindi rappresentato dalla quadrupla
+\begin{equation}
+\label{eq:evento_quadrupla_cap2}
+e_i = (x_i,y_i,t_i,p_i),
+\end{equation}
+con
+\begin{equation}
+\label{eq:polarita_valore}
+p_i = 
+\begin{cases} 
++1, & \Delta L_i \geq C_{+}, \\[4pt] 
+-1, & \Delta L_i \leq -C_{-}. 
+\end{cases}
+\end{equation}
+La polarità $p_i$ non indica il colore del pixel né la direzione del movimento: specifica semplicemente il segno della variazione di luminosità che ha provocato l'evento. Un bordo chiaro che attraversa il campo visivo può quindi produrre eventi di entrambe le polarità in regioni differenti; analogamente, una variazione dell'illuminazione ambientale può generare eventi anche in assenza di movimento degli oggetti. È importante sottolinearlo, perché identificare implicitamente ``evento'' e ``movimento'' porterebbe a una lettura errata del dato. Il sensore misura cambiamenti fotometrici; il movimento è una delle cause principali di tali cambiamenti, non la grandezza direttamente osservata.
+
+L'utilizzo della luminanza logaritmica nell'equazione~\eqref{eq:luminanza_logaritmica} possiede inoltre un significato preciso. Dalla relazione
+\begin{equation}
+\label{eq:rapporto_luminanza}
+\Delta L = \log I(t) - \log I(t^-) = \log \frac{I(t)}{I(t^-)},
+\end{equation}
+si osserva che il trigger dipende approssimativamente da una variazione relativa dell'intensità piuttosto che da una differenza assoluta. La stessa variazione percentuale può quindi produrre una risposta comparabile su livelli di illuminazione differenti. Questo meccanismo contribuisce all'elevato intervallo dinamico che caratterizza i sensori event-based rispetto alle telecamere convenzionali~\cite{gallego2022event, lichtsteiner2008dvs}. Il DVS originario presentato in~\cite{lichtsteiner2008dvs}, per esempio, riportava un dynamic range superiore a $120\,\mathrm{dB}$, insieme a una latenza minima dell'ordine di decine di microsecondi in condizioni favorevoli di illuminazione. I sensori successivi hanno ulteriormente sviluppato tali caratteristiche, ma il principio rimane lo stesso: il dato viene prodotto localmente quando l'informazione cambia, anziché quando scade il periodo di un clock globale.
+
+\begin{figure}[htbp]
+    \centering
+    % \includegraphics[width=0.9\textwidth]{images/placeholder_fig2_1.pdf}
+    \rule{0.85\textwidth}{4.5cm} % Box segnaposto per Fig 2.1
+    \caption{Modello ideale di generazione degli eventi in un pixel di una event camera. Un evento viene emesso quando la variazione della luminanza logaritmica rispetto al valore di riferimento supera una soglia positiva o negativa; la polarità indica il segno della variazione osservata.}
+    \label{fig:pixel_event_generation}
+\end{figure}
+
+La semplicità del modello ideale non deve però far pensare che l'uscita di una event camera sia una misura priva di rumore. In un sensore fisico intervengono mismatch tra pixel, rumore elettronico, background activity, condizioni di illuminazione e periodi refrattari. La soglia effettiva non coincide perfettamente tra tutti gli elementi del sensore e la precisione temporale nominale non deve essere confusa con la quantità di informazione utile contenuta in ogni singolo evento. Un timestamp molto preciso permette di localizzare temporalmente una variazione, ma non garantisce che quella variazione sia semanticamente rilevante.
+
+Questa osservazione diventa importante quando si considera il flusso completo. Una registrazione può essere descritta come
+\begin{equation}
+\label{eq:stream_completo}
+\mathcal{E} = \{e_i\}_{i=1}^{N} = \{(x_i,y_i,t_i,p_i)\}_{i=1}^{N}, \qquad t_i \leq t_{i+1}.
+\end{equation}
+Diversamente da un video composto da $T$ fotogrammi, $N$ non è fissato dalla durata della registrazione. Dipende dall'attività della scena, dal movimento relativo tra sensore e ambiente, dall'illuminazione e dai parametri del dispositivo. Un intervallo di pochi millisecondi può contenere un numero molto elevato di eventi, mentre un intervallo della stessa durata durante una fase statica può essere quasi vuoto.
+
+Il dato possiede quindi contemporaneamente due caratteristiche che a prima vista possono sembrare contraddittorie: è sparso e può avere un throughput molto elevato. Sparso, perché ogni pixel comunica soltanto in presenza di una variazione sufficientemente grande e gran parte dello spazio-tempo può non generare alcun evento; ad alto throughput, perché una scena dinamica osservata da un sensore ad alta risoluzione può produrre milioni di eventi al secondo. Il lavoro recente sul Fast Feature Field sottolinea proprio questa tensione: l'uscita di una event camera conserva una notevole quantità di struttura spazio-temporale, ma il flusso raw può raggiungere tassi molto elevati ed essere significativamente contaminato dal rumore, rendendo la costruzione di rappresentazioni efficienti un problema in sé~\cite{das2025fastfeaturefield}.
+
+Questa irregolarità costituisce una differenza sostanziale rispetto alla struttura dei dati per la quale sono state progettate gran parte delle moderne architetture deep learning. Un'immagine RGB di risoluzione $H \times W$ ha sempre dimensione
+\begin{equation*}
+3 \times H \times W.
+\end{equation*}
+Una sequenza di $T$ immagini produce naturalmente un tensore
+\begin{equation*}
+X \in \mathbb{R}^{T \times 3 \times H \times W}.
+\end{equation*}
+L'event stream dell'equazione~\eqref{eq:stream_completo}, al contrario, è una lista di lunghezza variabile i cui elementi possiedono timestamp continui o comunque ad altissima risoluzione. Non esiste a priori un primo asse di dimensione fissa equivalente al numero dei frame.
+
+Questo apre due possibilità concettualmente differenti. La prima consiste nel progettare algoritmi capaci di elaborare gli eventi direttamente quando arrivano, conservandone pienamente la natura asincrona. La seconda consiste nel trasformare il flusso in una rappresentazione intermedia più regolare, compatibile con operatori tensoriali e con l'elaborazione batch tipica di GPU e acceleratori digitali.
+
+Gran parte delle SNN addestrate oggi mediante framework deep learning adotta, almeno durante il training, la seconda soluzione. Un esempio esplicito nella letteratura utilizza la rappresentazione frame-based di SpikingJelly: gli eventi vengono trasformati in sequenze di frame ad alta frequenza prima di essere forniti alla SNN, sfruttando poi le regioni nulle di tali frame per ottenere computazione sparsa.
+
+La trasformazione non è però neutrale. Rappresentare gli eventi significa decidere quali dettagli del flusso originario rendere accessibili al modello e in quale forma.
+
+Una prima decisione riguarda il modo in cui la sequenza viene segmentata. È possibile utilizzare finestre di durata fissa, $[t_k, t_k+\Delta t)$, ottenendo
+\begin{equation}
+\label{eq:finestre_fisse}
+\mathcal{E}_k = \left\{ e_i \in \mathcal{E} : t_k \leq t_i < t_k+\Delta t \right\}.
+\end{equation}
+Questa soluzione preserva una scala temporale uniforme: ogni elemento della sequenza rappresenta la stessa durata fisica. Il numero di eventi contenuti in ciascun intervallo, tuttavia, rimane variabile.
+
+Una scelta alternativa consiste nel costruire finestre contenenti un numero prefissato $M$ di eventi. In questo caso il carico informativo di ogni finestra è più uniforme, ma la durata rappresentata diventa variabile:
+\begin{equation}
+\label{eq:finestre_eventi_fissi}
+\Delta t_k = t_{kM+M-1} - t_{kM}.
+\end{equation}
+Le due strategie attribuiscono quindi un significato diverso all'asse temporale. Con finestre a durata fissa, un timestep della rete corrisponde a un intervallo fisico costante; con finestre a numero di eventi fisso, un timestep rappresenta quantità di tempo differenti a seconda dell'attività della scena. La scelta deve essere coerente con il task. Quando velocità e durata costituiscono informazione discriminativa, normalizzare implicitamente il tempo attraverso finestre event-count può rimuovere proprio una parte della variabilità che si desidera conservare.
+
+Una volta definita la finestra, il modo più semplice per ottenere un tensore regolare consiste nell'accumulare gli eventi nello spazio.
+
+Una event frame può, per esempio, registrare il numero di eventi di polarità $p$ verificatisi in ciascun pixel:
+\begin{equation}
+\label{eq:event_frame_accumulo}
+F_k^{p}(x,y) = \sum_{e_i \in \mathcal{E}_k} \mathbf{1} \big[ x_i=x,\; y_i=y,\; p_i=p \big].
+\end{equation}
+Mantenendo separate le due polarità si ottiene una rappresentazione
+\begin{equation*}
+F_k \in \mathbb{R}^{2 \times H \times W}.
+\end{equation*}
+Una variante ancora più semplice registra soltanto la presenza o assenza di almeno un evento in ciascuna posizione. È una rappresentazione estremamente conveniente: possiede la stessa struttura bidimensionale di un'immagine, può essere processata attraverso convoluzioni standard e conserva la distribuzione spaziale e la polarità dell'attività.
+
+Il prezzo pagato è evidente osservando l'equazione~\eqref{eq:event_frame_accumulo}: il timestamp $t_i$ non compare più una volta stabilita l'appartenenza dell'evento alla finestra. Due eventi avvenuti all'inizio e alla fine dello stesso intervallo sono trattati, all'interno del frame, come appartenenti alla stessa posizione temporale.
+
+La perdita non è necessariamente problematica. Se $\Delta t$ è sufficientemente piccolo rispetto alla dinamica del fenomeno, l'aggregazione può costituire un'approssimazione molto efficace e ridurre simultaneamente rumore e costo computazionale. Se, al contrario, informazioni significative si sviluppano all'interno della finestra, esse vengono fuse.
+
+È quindi utile pensare al temporal binning non come a una semplice operazione di preprocessing, ma come a un filtro sulla risoluzione temporale disponibile.
+
+Supponendo una sequenza di durata $D$, utilizzando $T$ bin uniformi si ottiene
+\begin{equation}
+\label{eq:delta_t_rapporto}
+\Delta t = \frac{D}{T}.
+\end{equation}
+Aumentare $T$ riduce $\Delta t$ e rende disponibili al modello differenze temporali più fini. Allo stesso tempo aumenta il numero di aggiornamenti richiesti alla rete. In una SNN, questo significa aggiornare più volte gli stati neuronali e propagare un numero maggiore di tensori attraverso gli strati.
+
+La relazione
+\begin{equation}
+\label{eq:tradeoff_t_costo}
+T \uparrow \quad\Rightarrow\quad \text{granularità temporale} \uparrow \quad\text{e}\quad \text{costo temporale} \uparrow
+\end{equation}
+costituisce uno dei compromessi fondamentali che verranno ripresi nel seguito della tesi.
+
+Un secondo limite delle event frame è che esse trattano l'ordine degli eventi all'interno del bin come irrilevante. Per ridurre questa perdita sono state sviluppate rappresentazioni che mantengono una dimensione temporale interna.
+
+Un esempio particolarmente influente è la voxel grid. In questo caso la finestra non viene rappresentata attraverso una sola superficie $H \times W$, ma viene suddivisa in $B$ intervalli lungo il tempo, costruendo un volume
+\begin{equation}
+\label{eq:voxel_grid_dim}
+V \in \mathbb{R}^{B \times H \times W}.
+\end{equation}
+Zhu et al. propongono una formulazione nella quale i timestamp vengono normalizzati nell'intervallo $[0, B-1]$ e ciascun evento viene distribuito tra i bin temporali vicini mediante interpolazione lineare~\cite{zhu2019unsupervised}. Questo evita di associare rigidamente un evento a una singola slice e preserva meglio la distribuzione temporale all'interno della finestra. Gli autori mostrano esplicitamente che una semplice immagine ottenuta sommando gli eventi elimina gran parte della ricca informazione temporale disponibile, mentre un volume discretizzato ne conserva una porzione maggiore~\cite{zhu2019unsupervised}.
+
+Indicando con
+\begin{equation}
+\label{eq:timestamp_normalizzato}
+t_i^{*} = (B-1) \frac{t_i - t_{\min}}{t_{\max} - t_{\min}}
+\end{equation}
+il timestamp normalizzato, una formulazione semplificata del volume può essere scritta come
+\begin{equation}
+\label{eq:voxel_grid_interpolazione}
+V(b,x,y) = \sum_i p_i \, \max \left( 0,\, 1 - |b - t_i^{*}| \right) \mathbf{1}[x=x_i,\, y=y_i].
+\end{equation}
+La voxel grid occupa quindi una posizione intermedia: non conserva l'esatta sequenza dei timestamp raw, ma non riduce neppure l'intera finestra a un singolo accumulo. Il parametro $B$ controlla direttamente il compromesso tra granularità e dimensione della rappresentazione.
+
+\begin{figure}[htbp]
+    \centering
+    % \includegraphics[width=0.95\textwidth]{images/placeholder_fig2_2.pdf}
+    \rule{0.9\textwidth}{4.8cm} % Box segnaposto per Fig 2.2
+    \caption{Differenti rappresentazioni di uno stesso event stream. L'aggregazione in event frame privilegia la distribuzione spaziale dell'attività; una voxel grid conserva una discretizzazione della sua distribuzione temporale; una time surface codifica la recenza degli eventi attraverso uno stato locale decrescente nel tempo.}
+    \label{fig:confronto_rappresentazioni_discrete}
+\end{figure}
+
+Un approccio diverso consiste nel rappresentare non il numero degli eventi, ma la loro recenza. Le time surface associano a ciascuna posizione uno stato che dipende dall'ultimo evento osservato. Una forma comune è
+\begin{equation}
+\label{eq:time_surface}
+S_p(x,y,t) = \exp \left( -\frac{t - t^{p}_{\mathrm{last}}(x,y)}{\tau_s} \right),
+\end{equation}
+dove $t^{p}_{\mathrm{last}}(x,y)$ rappresenta il timestamp dell'ultimo evento di polarità $p$ nel pixel e $\tau_s$ controlla il decadimento temporale.
+
+Un evento recente produce quindi un valore vicino a uno, mentre la sua traccia svanisce progressivamente nel tempo. Il risultato può essere interpretato come una breve memoria locale della struttura spazio-temporale. Rappresentazioni derivate dalle time surface, come HATS, aggregano tali tracce per ottenere descrittori più robusti per la classificazione~\cite{sironi2018hats}. Sironi et al. motivano esplicitamente questa scelta attraverso l'uso di unità di memoria locale capaci di sfruttare informazione temporale passata senza trattare l'event stream come una semplice immagine accumulata~\cite{sironi2018hats}.
+
+La differenza rispetto alla voxel grid è significativa. Una voxel grid cerca di conservare la distribuzione degli eventi su un certo numero di intervalli temporali; una time surface comprime invece la storia in uno stato che enfatizza quanto recentemente ciascuna posizione sia stata attiva.
+
+Si tratta di due differenti inductive bias:
+\begin{itemize}
+    \item La prima dice al modello: \emph{conta quando, all'interno della finestra, sono avvenuti gli eventi.}
+    \item La seconda dice: \emph{conta soprattutto quanto recente è stata l'attività locale.}
+\end{itemize}
+Nessuna delle due è universalmente superiore. La rappresentazione migliore dipende dal tipo di relazione temporale necessaria al task e dall'architettura che dovrà elaborarla.
+
+Questo punto permette di evitare una lettura troppo semplice del problema. Una rappresentazione che conserva più timestamp non è automaticamente migliore di una più compressa. Conservare informazione richiede memoria e computazione; inoltre, mantenere un dettaglio temporale che il modello non sa utilizzare può tradursi soltanto in un input più grande.
+
+L'interazione tra rappresentazione e modello può essere resa evidente considerando due estremi.
+
+Nel primo, l'intero stream viene compresso in un'unica immagine:
+\begin{equation*}
+\mathcal{E} \longrightarrow F.
+\end{equation*}
+L'architettura non può ricostruire l'ordine degli eventi se tale informazione non è più presente in $F$.
+
+Nel secondo, il modello riceve praticamente l'intera sequenza raw:
+\begin{equation*}
+\mathcal{E} \longrightarrow (e_1, e_2, \dots, e_N).
+\end{equation*}
+L'informazione disponibile è massima, ma il sistema deve ora affrontare una sequenza irregolare potenzialmente molto lunga e rumorosa.
+
+Tra questi estremi esiste uno spazio continuo di rappresentazioni:
+\begin{equation}
+\label{eq:tradeoff_compressione_fedelta}
+\text{compressione} \quad\longleftrightarrow\quad \text{fedeltà temporale}.
+\end{equation}
+L'obiettivo non è massimizzare indiscriminatamente la seconda, ma conservare l'informazione utile al costo sostenibile per il sistema.
+
+Questa tensione ha motivato anche strategie più recenti nelle quali la rappresentazione stessa viene appresa. Il Fast Feature Field, per esempio, costruisce una rappresentazione multi-canale di un volume spazio-temporale di eventi imparando a predire eventi futuri a partire da quelli passati~\cite{das2025fastfeaturefield}. Gli autori interpretano in questo modo la rappresentazione come una statistica del passato capace di preservare informazione su struttura e movimento; il metodo sfrutta inoltre un encoding multi-risoluzione che evita di elaborare coordinate in cui non sono presenti eventi~\cite{das2025fastfeaturefield}.
+
+È interessante confrontare questa impostazione con le rappresentazioni più semplici. Nello stesso lavoro, event voxel grid ed event frame vengono utilizzate come baseline complementari: la prima conserva informazione temporale ma, nella specifica formulazione considerata dagli autori, trascura la polarità; la seconda conserva la polarità ma perde la collocazione temporale interna alla finestra~\cite{das2025fastfeaturefield}. Il confronto evidenzia bene perché parlare genericamente di ``conversione degli eventi in immagini'' nasconda una decisione sostanziale: ogni rappresentazione sceglie quali invarianti costruire e quali dettagli scartare.
+
+Per il percorso di questa tesi non è necessario determinare una rappresentazione universalmente ottimale. È invece fondamentale comprendere che la rappresentazione costituisce il primo collo di bottiglia attraverso il quale deve passare l'informazione temporale.
+
+La tabella~\ref{tab:confronto_rappresentazioni} sintetizza le principali famiglie discusse.
+
+\begin{table}[htbp]
+\centering
+\small
+\renewcommand{\arraystretch}{1.2}
+\caption{Proprietà qualitative di alcune famiglie di rappresentazioni per dati event-based. Il confronto evidenzia il compromesso tra fedeltà temporale, regolarità computazionale e grado di compressione della storia degli eventi.}
+\label{tab:confronto_rappresentazioni}
+\begin{tabular}{p{2.6cm} p{1.6cm} p{2cm} p{1.8cm} c p{2.6cm} p{2.6cm}}
+\hline
+\textbf{Rappresentazione} & \textbf{Info. spaziale} & \textbf{Polarità} & \textbf{Info. intra-finestra} & \textbf{Struttura regolare} & \textbf{Principale vantaggio} & \textbf{Principale perdita} \\
+\hline
+Stream raw & Completa & Sì & Timestamp originari & No & Massima fedeltà al sensore & Elevata irregolarità e costo di elaborazione \\
+Event frame / count map & Completa & Opzionale / separabile & No & Sì & Semplicità e compatibilità CNN/SNN & Ordine interno al bin \\
+Voxel grid & Completa & Sì o incorporata & Discretizzata & Sì & Buon compromesso spazio-temporale & Quantizzazione del tempo \\
+Time surface & Completa & Separabile & Recenza locale & Sì & Memoria temporale compatta & Comprime la storia nell'ultimo evento \\
+Rappresentazione appresa & Dipende dal metodo & Dipende dal metodo & Appresa & Generalmente sì & Adattabilità al task & Maggiore costo e minore trasparenza \\
+\hline
+\end{tabular}
+\end{table}
+
+La tabella non deve essere interpretata come una graduatoria. Serve piuttosto a rendere esplicito il fatto che la conversione del flusso raw in un tensore costituisce già una forma di modellazione.
+
+Questo aspetto è particolarmente rilevante nel caso delle SNN. La natura event-driven del sensore e quella del modello potrebbero suggerire che gli eventi possano essere trasferiti direttamente dal primo al secondo senza mediazioni. Tale possibilità esiste su piattaforme asincrone dedicate, ma non coincide con il modo in cui la maggior parte delle SNN profonde viene oggi addestrata. Nella pratica, molte implementazioni adottano timestep discreti e ricevono tensori $X_t$ costruiti aggregando gli eventi entro intervalli temporali; anche i neuroni vengono quindi aggiornati secondo una simulazione sincrona del tipo
+\begin{equation}
+\label{eq:simulazione_sincrona}
+X_1 \longrightarrow X_2 \longrightarrow \dots \longrightarrow X_T.
+\end{equation}
+Il tempo fisico continuo del sensore viene così trasformato in un tempo computazionale discreto.
+
+La distinzione è importante. Se una sequenza di durata $2\,\mathrm{s}$ viene rappresentata con intervalli di $50\,\mathrm{ms}$, il modello riceve
+\begin{equation*}
+T = \frac{2}{0.05} = 40
+\end{equation*}
+passi. L'informazione che avviene all'interno di ogni intervallo viene codificata nella corrispondente rappresentazione $X_t$, mentre le relazioni tra finestre devono essere modellate dall'architettura.
+
+Ridurre l'intervallo a $25\,\mathrm{ms}$ raddoppia il numero di timestep a 80. Il modello riceve una descrizione temporalmente più fine, ma deve anche effettuare il doppio degli aggiornamenti temporali. Ciò incide non soltanto sul tempo di calcolo: in una rete spiking aumenta il numero di volte in cui devono essere aggiornati e propagati gli stati interni dei neuroni.
+
+Appare quindi una distinzione che sarà importante nei capitoli successivi:
+\begin{equation}
+\label{eq:risoluzione_vs_capacita}
+\boxed{\text{risoluzione temporale dell'input} \neq \text{capacità temporale del modello}}
+\end{equation}
+
+La prima descrive quanto finemente il segnale viene presentato alla rete. La seconda descrive ciò che la rete riesce a fare con tale informazione.
+
+È perfettamente possibile fornire a un modello una sequenza molto fine e ottenere poco beneficio, se l'architettura non possiede un meccanismo adatto a combinare ciò che accade nei diversi timestep. Allo stesso modo, un'architettura con una memoria temporale sofisticata non può recuperare dettagli che sono stati irreversibilmente eliminati durante la costruzione dell'input.
+
+Rappresentazione e dinamica del modello costituiscono pertanto due trasformazioni successive:
+\begin{equation}
+\label{eq:decomposizione_flusso}
+\mathcal{E} \overset{\mathcal{R}}{\longrightarrow} X_{1:T} \overset{\mathcal{M}}{\longrightarrow} Z_{1:T} \overset{\mathcal{D}}{\longrightarrow} \hat{y},
+\end{equation}
+dove $\mathcal{R}$ rappresenta l'operatore di costruzione dell'input, $\mathcal{M}$ il modello dinamico e $\mathcal{D}$ il meccanismo che produce la decisione finale.
+
+Questa decomposizione offre un modo utile di leggere l'intero problema affrontato dalla tesi. Se una determinata informazione temporale non influenza $\hat{y}$, esistono almeno tre possibilità: essa può essere stata eliminata da $\mathcal{R}$; può essere arrivata al modello ma non essere stata conservata o integrata da $\mathcal{M}$; può infine essere presente nella rappresentazione interna ma non essere utilizzata efficacemente da $\mathcal{D}$.
+
+Attribuire direttamente ogni limite alla dinamica neuronale sarebbe quindi prematuro.
+
+Per questa ragione, nel seguito del lavoro la rappresentazione dell'input viene trattata come una componente controllata dell'esperimento. Quando si confrontano due architetture, il modo in cui gli eventi vengono discretizzati deve rimanere invariato, salvo quando sia proprio la rappresentazione temporale la variabile oggetto dell'analisi. Solo così un cambiamento prestazionale può essere interpretato senza confondere l'effetto del modello con quello dell'informazione che gli viene fornita.
+
+La conseguenza più importante di questa sezione può essere espressa in termini semplici: una event camera non consegna alla rete una sequenza già pronta per essere compresa. Consegna un flusso di variazioni. Trasformare quelle variazioni in una rappresentazione elaborabile significa già scegliere una scala temporale, una forma di memoria e un livello di compressione.
+
+Resta ora da affrontare il passaggio successivo. Una volta che l'informazione è stata resa disponibile sotto forma di una sequenza $X_{1:T}$, come può una rete spiking conservarla attraverso il tempo? Quanto lontano nel passato può influire un evento? Che cosa accade quando più scale temporali devono convivere nello stesso stato neuronale?
+
+Queste domande conducono direttamente alla dinamica dei neuroni spiking.
+
+
+% ==============================================================================
+%  Dinamica neuronale e memoria nelle Spiking Neural Networks
+% ==============================================================================
+
+
+
+\section{Dinamica neuronale e memoria nelle Spiking Neural Networks}
+\label{sec:dinamica_neuronale_memoria}
+
+La sezione precedente ha mostrato come un flusso di eventi venga trasformato in una sequenza discreta di rappresentazioni
+\begin{equation*}
+X_1, X_2, \dots, X_T.
+\end{equation*}
+Una volta compiuta questa trasformazione, il problema cambia natura. L'informazione temporale è stata resa disponibile alla rete, almeno nei limiti imposti dalla rappresentazione scelta; resta però da capire come essa possa essere conservata e trasformata durante l'elaborazione.
+
+È in questo passaggio che una Spiking Neural Network si distingue in modo sostanziale da una rete feed-forward convenzionale. In quest'ultima, l'attivazione prodotta da uno strato per un dato input non possiede, in generale, una memoria intrinseca dell'attivazione calcolata per l'input precedente. In una SNN, invece, il neurone contiene una variabile di stato che persiste nel tempo. L'ingresso corrente non viene quindi elaborato isolatamente, ma modifica uno stato che porta con sé una traccia della storia precedente.
+
+In forma astratta, la dinamica può essere scritta come
+\begin{equation}
+\label{eq:dinamica_astratta_snn}
+h_t = F(h_{t-1}, x_t), \qquad s_t = G(h_t),
+\end{equation}
+dove $x_t$ rappresenta l'ingresso ricevuto al timestep $t$, $h_t$ lo stato interno del neurone e $s_t$ lo spike eventualmente prodotto. La prima relazione introduce la memoria; la seconda trasforma lo stato continuo in un evento discreto.
+
+La semplicità dell'equazione~\eqref{eq:dinamica_astratta_snn} nasconde tuttavia una questione importante: la forma di $F$ determina quale passato il neurone è in grado di ricordare. La memoria di una SNN non è un archivio neutrale nel quale vengono conservati tutti gli ingressi precedenti. È una trasformazione dinamica, caratterizzata da decadimento, soglie e reset, che seleziona implicitamente quali componenti della storia continuino a influenzare il presente.
+
+Comprendere questa dinamica è indispensabile per interpretare le modifiche neuronali studiate nel seguito della tesi.
+
+\subsection{Dal neurone Integrate-and-Fire al Leaky Integrate-and-Fire}
+Il modello più semplice utile a introdurre il principio è l'Integrate-and-Fire (IF). Il neurone accumula nel proprio potenziale di membrana gli ingressi ricevuti nel tempo. Indicando con $V_t$ il potenziale dopo l'eventuale reset al timestep precedente e con $X_t$ il contributo sinaptico corrente, una rappresentazione discreta elementare può essere scritta come
+\begin{equation}
+\label{eq:if_discreto}
+H_t = V_{t-1} + X_t,
+\end{equation}
+dove $H_t$ rappresenta il potenziale aggiornato prima della generazione dello spike.
+
+Il neurone emette un evento quando il potenziale supera una soglia $V_{\mathrm{th}}$:
+\begin{equation}
+\label{eq:if_spike}
+S_t = \Theta(H_t - V_{\mathrm{th}}),
+\end{equation}
+con
+\begin{equation*}
+\Theta(z) = 
+\begin{cases} 
+1, & z \geq 0, \\ 
+0, & z < 0. 
+\end{cases}
+\end{equation*}
+
+Nel modello IF ideale, in assenza di firing, ciò che è stato accumulato nel passato viene conservato indefinitamente. Un contributo ricevuto molti timestep prima continua quindi a partecipare allo stato corrente finché non interviene un reset.
+
+Questa proprietà fornisce memoria, ma non introduce alcun meccanismo di oblio. Dal punto di vista di un sistema fisico e di molti compiti temporali, è una descrizione piuttosto rigida: informazioni molto lontane possono continuare ad avere lo stesso peso di contributi recenti.
+
+Il modello Leaky Integrate-and-Fire (LIF) introduce proprio questa differenza. Il potenziale non viene semplicemente accumulato, ma tende progressivamente verso un valore di riposo. Nella formulazione continua, la dinamica subthreshold può essere rappresentata come
+\begin{equation}
+\label{eq:lif_continuo}
+\tau_m \frac{\mathrm{d}V(t)}{\mathrm{d}t} = -\left(V(t) - V_{\mathrm{rest}}\right) + X(t),
+\end{equation}
+dove $\tau_m$ è la costante temporale di membrana.
+
+Il termine
+\begin{equation*}
+-\left(V(t) - V_{\mathrm{rest}}\right)
+\end{equation*}
+introduce il leak: in assenza di nuovo ingresso, il potenziale non resta indefinitamente al valore raggiunto, ma decade verso $V_{\mathrm{rest}}$.
+
+Questa semplice modifica cambia profondamente il significato dello stato neuronale. Il passato continua a influenzare il presente, ma il suo peso diminuisce con il tempo.
+
+Per evidenziare questo comportamento, trascuriamo temporaneamente firing e reset e assumiamo $V_{\mathrm{rest}} = 0$. Una forma discreta della dinamica può essere scritta come
+\begin{equation}
+\label{eq:lif_decadimento_discreto}
+V_t = \lambda V_{t-1} + X_t, \qquad 0 \leq \lambda < 1,
+\end{equation}
+dove $\lambda$ è il fattore di decadimento.
+
+Espandendo ricorsivamente l'equazione si ottiene
+\begin{equation}
+\label{eq:lif_espansione_temporale}
+V_t = X_t + \lambda X_{t-1} + \lambda^2 X_{t-2} + \dots + \lambda^k X_{t-k} + \dots .
+\end{equation}
+
+L'equazione~\eqref{eq:lif_espansione_temporale} rende particolarmente evidente che cosa significhi, in questo caso, ``memoria temporale''. Il neurone effettua una combinazione della storia recente nella quale i contributi precedenti vengono pesati secondo una legge esponenziale.
+
+Un evento ricevuto un timestep prima ha peso proporzionale a $\lambda$; uno ricevuto due timestep prima ha peso $\lambda^2$; dopo $k$ timestep il contributo è proporzionale a $\lambda^k$.
+
+La memoria del LIF non è quindi semplicemente ``breve'' o ``lunga'': possiede una forma specifica.
+
+Se la discretizzazione deriva da una dinamica esponenziale con passo temporale $\Delta t$, il fattore di decadimento può essere interpretato approssimativamente come
+\begin{equation}
+\label{eq:lambda_tau}
+\lambda = \exp\left(-\frac{\Delta t}{\tau_m}\right).
+\end{equation}
+
+La stessa costante temporale neuronale produce quindi un comportamento differente se cambia la durata fisica associata a un timestep. Questo stabilisce un legame diretto con quanto discusso nella sezione~2.1: la discretizzazione dell'event stream e la dinamica del neurone non sono due scelte completamente indipendenti.
+
+Supponiamo, per esempio, di mantenere invariati i parametri neuronali ma dimezzare la durata fisica rappresentata da ogni bin. Il modello eseguirà un numero doppio di aggiornamenti sulla stessa durata reale. La ``memoria in timestep'' e la ``memoria in millisecondi'' non coincidono necessariamente.
+
+Questa distinzione sarà importante quando, nei capitoli sperimentali, verranno confrontate diverse granularità temporali.
+
+\begin{figure}[htbp]
+    \centering
+    % \includegraphics[width=0.9\textwidth]{images/placeholder_fig2_3.pdf}
+    \rule{0.85\textwidth}{4.8cm} % Box segnaposto per Fig 2.3
+    \caption{Principio di integrazione temporale in un neurone Leaky Integrate-and-Fire. Gli ingressi modificano il potenziale di membrana, che decade verso il valore di riposo in assenza di nuova attività. Eventi sufficientemente ravvicinati possono sommarsi fino al superamento della soglia e alla generazione di uno spike.}
+    \label{fig:dinamica_lif}
+\end{figure}
+
+Questa figura permette anche di chiarire un punto talvolta poco esplicitato. Il neurone LIF non rileva soltanto l'ampiezza degli ingressi, ma anche la loro prossimità temporale. Due contributi individualmente insufficienti a superare la soglia possono provocare uno spike se arrivano a distanza abbastanza breve da sommarsi prima che il primo sia decaduto. Se gli stessi contributi vengono separati da un intervallo più lungo, il risultato può essere diverso.
+
+La dinamica neuronale costituisce quindi già, di per sé, un semplice filtro temporale.
+
+Il termine semplice è però importante.
+
+L'equazione~\eqref{eq:lif_espansione_temporale} descrive infatti la dinamica soltanto nel regime subthreshold. Nel neurone reale utilizzato dalla rete, quando $H_t$ supera la soglia intervengono la generazione dello spike e il reset. La memoria diventa quindi non lineare.
+
+\subsection{Soglia e reset: la memoria non è soltanto decadimento}
+Dopo il firing, il neurone deve modificare il proprio potenziale. Una possibilità è il cosiddetto hard reset:
+\begin{equation}
+\label{eq:hard_reset}
+V_t = 
+\begin{cases} 
+V_{\mathrm{reset}}, & S_t = 1, \\ 
+H_t, & S_t = 0. 
+\end{cases}
+\end{equation}
+Se il potenziale supera la soglia di una quantità significativa, tutta la parte eccedente viene eliminata.
+
+Una seconda possibilità è il soft reset, o reset by subtraction:
+\begin{equation}
+\label{eq:soft_reset}
+V_t = H_t - S_t V_{\mathrm{th}},
+\end{equation}
+assumendo per semplicità un potenziale di reset nullo. In questo caso viene sottratta la quantità corrispondente alla soglia, mentre il residuo rimane disponibile per il timestep successivo.
+
+La differenza è tutt'altro che puramente implementativa. Han, Srinivasan e Roy mostrano, nel contesto della conversione ANN-SNN, che un hard reset può introdurre perdita di informazione eliminando il potenziale residuo sopra soglia; il loro neurone RMP (Residual Membrane Potential) utilizza invece un soft reset proprio per preservare tale residuo e ottenere una relazione più fedele tra ingresso e firing rate~\cite{han2020rmp}.
+
+Quel lavoro affronta un problema diverso da quello della presente tesi, poiché studia principalmente ANN-to-SNN conversion. È però istruttivo per un motivo più generale: anche dopo avere fissato la legge di integrazione, il modo in cui il neurone reagisce al firing determina quale informazione viene conservata nel proprio stato.
+
+La memoria neuronale nasce pertanto dall'interazione di almeno tre elementi:
+\begin{equation}
+\label{eq:interazione_tre_elementi}
+\text{integrazione} \;+\; \text{decadimento} \;+\; \text{reset}.
+\end{equation}
+
+La soglia aggiunge inoltre una non linearità che seleziona quando lo stato analogico venga trasformato in comunicazione binaria.
+
+A livello di rete, questa dinamica viene replicata in migliaia o milioni di unità. Un generico strato spiking può essere rappresentato come
+\begin{align}
+\label{eq:strato_spiking_generico}
+X_t^{(l)} &= W^{(l)}S_t^{(l-1)}, \nonumber \\
+H_t^{(l)} &= F\!\left( V_{t-1}^{(l)}, X_t^{(l)} \right), \\
+S_t^{(l)} &= \Theta \left( H_t^{(l)} - V_{\mathrm{th}}^{(l)} \right). \nonumber
+\end{align}
+
+La rete propaga quindi informazione in due direzioni contemporaneamente: attraverso gli strati e attraverso il tempo.
+
+La prima relazione collega il livello $l-1$ al livello $l$ nello stesso timestep; la seconda collega lo stato del neurone al proprio passato.
+
+È questa duplice dipendenza a conferire alle SNN una struttura spazio-temporale naturale, ma anche a renderne più complesso l'addestramento.
+
+\subsection{La costante temporale come parametro del modello}
+L'equazione~\eqref{eq:lambda_tau} mostra che la costante $\tau_m$ determina direttamente la rapidità con cui il passato perde influenza.
+
+Un valore piccolo produce una dinamica più reattiva: il neurone dimentica rapidamente e risponde principalmente agli ingressi recenti. Un valore elevato genera invece una memoria più persistente, ma fa sì che contributi temporalmente distanti rimangano sovrapposti più a lungo.
+
+Non esiste quindi un valore universalmente ottimale.
+
+Un fenomeno caratterizzato da variazioni rapide potrebbe beneficiare di una dinamica relativamente breve; una relazione che si sviluppa su centinaia di millisecondi potrebbe richiedere maggiore persistenza. All'interno della stessa sequenza, inoltre, possono coesistere entrambe le scale.
+
+Nel LIF tradizionale questa costante viene spesso scelta manualmente. Ciò equivale a imporre a priori una parte importante del filtro temporale applicato dalla rete.
+
+Fang et al. affrontano esplicitamente questo limite introducendo il Parametric Leaky Integrate-and-Fire (PLIF), nel quale la costante temporale viene resa apprendibile insieme ai pesi sinaptici~\cite{fang2021plif}. Gli autori osservano che i parametri legati alla membrana vengono spesso fissati manualmente e condivisi da molti neuroni, limitando la diversità delle dinamiche temporali disponibili alla rete~\cite{fang2021plif}.
+
+Nella formulazione PLIF, la dinamica può essere scritta come
+\begin{equation}
+\label{eq:plif_formulazione}
+H_t = V_{t-1} + \frac{1}{\tau} \left[ -\left(V_{t-1} - V_{\mathrm{reset}}\right) + X_t \right],
+\end{equation}
+ma $\tau$ non è più una costante fissata esternamente. Si introduce un parametro apprendibile $a$ e si pone, per esempio,
+\begin{equation}
+\label{eq:plif_parametro}
+\frac{1}{\tau} = k(a),
+\end{equation}
+dove $k(\cdot)$ viene scelto in modo da mantenere la dinamica in un intervallo valido; nella formulazione originale è impiegata una parametrizzazione basata su una funzione sigmoide~\cite{fang2021plif}.
+
+Il vantaggio concettuale è significativo. Il modello non deve più adattare i soli pesi $W$ mantenendo fissa la modalità con cui ciascuno strato integra il passato: può modificare anche la propria scala temporale caratteristica.
+
+In termini intuitivi:
+\begin{equation*}
+W \quad\text{impara}\quad \text{che cosa integrare},
+\end{equation*}
+mentre
+\begin{equation*}
+\tau \quad\text{contribuisce a determinare}\quad \text{per quanto tempo conservarlo}.
+\end{equation*}
+
+Questa separazione rende PLIF particolarmente interessante per dati neuromorfici, nei quali la frequenza e la durata dei pattern possono variare sensibilmente. Fang et al. mostrano miglioramenti su dataset sia statici sia neuromorfici, tra cui CIFAR10-DVS e DVS128 Gesture, e osservano anche una minore sensibilità alla scelta iniziale della costante temporale~\cite{fang2021plif}.
+
+Un risultato positivo di PLIF non deve tuttavia essere interpretato come dimostrazione che il neurone abbia acquisito una memoria temporale arbitraria.
+
+La dinamica resta infatti riconducibile, nel regime subthreshold, a una forma di integrazione con decadimento. Il modello può imparare quanto rapidamente dimenticare, ma non ottiene automaticamente un accesso esplicito e indipendente a ciò che è accaduto a ritardi differenti.
+
+Un neurone potrebbe, per esempio, imparare una costante temporale abbastanza lunga da preservare una traccia dell'attività verificatasi cento millisecondi prima. Questo non equivale ad avere contemporaneamente accesso a
+\begin{equation*}
+X_t, \quad X_{t-1}, \quad X_{t-4}
+\end{equation*}
+come entità separate e combinabili attraverso pesi differenti.
+
+È precisamente questa distinzione che, più avanti, separerà le modifiche alle dinamiche neuronali dalle modifiche che introducono interazioni temporali esplicite.
+
+Anche la letteratura successiva sottolinea tale limite. Nel lavoro STCA-SNN, Wu et al. osservano che LIF e PLIF forniscono dipendenze temporali attraverso la dinamica neuronale, ma tali legami rimangono relativamente deboli quando il compito richiede correlazioni temporali globali; da questa osservazione motivano l'introduzione di un meccanismo di attenzione esplicito sulle dimensioni temporale e di canale~\cite{wu2023stca}.
+
+Il punto non è quindi stabilire se PLIF sia ``migliore'' del LIF in senso assoluto. I due modelli introducono livelli differenti di flessibilità all'interno della stessa idea di base: comprimere il passato in uno stato di membrana.
+
+\subsection{Addestrare una dinamica discreta: il problema della derivata dello spike}
+La presenza della funzione soglia dell'equazione~\eqref{eq:if_spike} crea un problema che non compare nelle normali reti con attivazioni differenziabili.
+
+La derivata della funzione di Heaviside è
+\begin{equation*}
+\frac{\mathrm{d}\Theta(z)}{\mathrm{d}z} = 0
+\end{equation*}
+quasi ovunque, mentre non è definita nel punto $z = 0$.
+
+Se questa derivata venisse utilizzata direttamente durante la retropropagazione, il gradiente associato alla generazione degli spike sarebbe nullo quasi ovunque. I pesi delle reti profonde non potrebbero quindi essere ottimizzati efficacemente attraverso la normale discesa del gradiente.
+
+Uno dei principali sviluppi che hanno reso possibile l'addestramento end-to-end delle SNN moderne è costituito dai surrogate gradients~\cite{neftci2019surrogate}. L'idea consiste nel mantenere inalterato il comportamento spiking durante il forward pass,
+\begin{equation}
+\label{eq:surrogate_forward}
+S_t = \Theta(H_t - V_{\mathrm{th}}),
+\end{equation}
+ma utilizzare durante il backward pass la derivata di una funzione continua
+\begin{equation}
+\label{eq:surrogate_backward}
+\frac{\partial S_t}{\partial H_t} \approx \sigma'\left( H_t - V_{\mathrm{th}} \right),
+\end{equation}
+dove $\sigma(\cdot)$ è una funzione opportunamente scelta.
+
+La rete continua quindi a comunicare spike binari durante il calcolo della predizione; soltanto il gradiente utilizzato per l'ottimizzazione viene sostituito da un'approssimazione.
+
+Neftci, Mostafa e Zenke mostrano come questa strategia consenta di utilizzare gran parte degli strumenti dell'ottimizzazione gradient-based anche nel dominio spiking, aggirando la non differenziabilità della soglia senza rimuovere la natura discreta del forward~\cite{neftci2019surrogate}.
+
+\begin{figure}[htbp]
+    \centering
+    % \includegraphics[width=0.9\textwidth]{images/placeholder_fig2_4.pdf}
+    \rule{0.85\textwidth}{4.5cm} % Box segnaposto per Fig 2.4
+    \caption{Principio del surrogate gradient. La funzione di firing discreta viene mantenuta nel forward pass, mentre durante la retropropagazione la sua derivata viene sostituita da un'approssimazione continua non nulla in prossimità della soglia.}
+    \label{fig:surrogate_gradient_schema}
+\end{figure}
+
+Questa soluzione introduce a sua volta una scelta progettuale. L'ampiezza e la forma della surrogate function influenzano il modo in cui il gradiente viene distribuito intorno alla soglia e quindi la dinamica dell'ottimizzazione. Non è però necessario, ai fini del presente capitolo, confrontare sistematicamente le numerose surrogate function proposte in letteratura. Nel seguito verrà specificata quella utilizzata dalla baseline e verrà mantenuta invariata negli esperimenti architetturali, salvo quando diversamente indicato.
+
+Il surrogate gradient risolve il problema locale della soglia. Rimane però il fatto che lo stato del neurone dipende dal proprio passato.
+
+Per addestrare direttamente una SNN temporale è quindi necessario propagare il gradiente anche attraverso la sequenza. La rete può essere concettualmente ``srotolata'' lungo i timestep:
+\begin{equation*}
+V_0 \longrightarrow V_1 \longrightarrow V_2 \longrightarrow \dots \longrightarrow V_T.
+\end{equation*}
+
+La procedura è una forma di Backpropagation Through Time (BPTT). Se la loss complessiva è indicata con $\mathcal{L}$, il gradiente rispetto allo stato al tempo $t$ contiene sia il contributo locale sia quello propagato dagli istanti successivi:
+\begin{equation}
+\label{eq:bptt_gradiente}
+\frac{\partial\mathcal{L}}{\partial H_t} = \frac{\partial\mathcal{L}_t}{\partial H_t} + \frac{\partial\mathcal{L}}{\partial H_{t+1}} \frac{\partial H_{t+1}}{\partial H_t}.
+\end{equation}
+
+Questo termine ricorsivo è ciò che permette a una decisione presa alla fine della sequenza di modificare i parametri responsabili dell'elaborazione di eventi osservati molto prima.
+
+I surrogate gradients e la BPTT hanno reso possibile il direct training di reti spiking profonde e rappresentano oggi una delle principali strategie per addestrare SNN su compiti complessi~\cite{neftci2019surrogate, wu2018spatiotemporal}. La survey di Karamimanesh et al. evidenzia come l'unrolling della dinamica LIF combinato con surrogate gradient sia divenuto uno degli approcci più comuni nel supervised learning delle SNN profonde~\cite{karamimanesh2025fpga}.
+
+Il prezzo da pagare è soprattutto durante l'addestramento.
+
+Per calcolare i gradienti devono essere conservate le attivazioni e gli stati necessari alla retropropagazione nei diversi timestep. In prima approssimazione, indicando con $N_l$ il numero di stati memorizzati nello strato $l$, l'ordine di grandezza della memoria associata alla dinamica temporale cresce come
+\begin{equation}
+\label{eq:memoria_bptt}
+\mathcal{O}\left( T \sum_l N_l \right),
+\end{equation}
+prima di considerare ulteriori attivazioni richieste dalle operazioni di rete.
+
+Aumentare il numero dei timestep ha quindi due effetti distinti: durante l'inferenza aumenta il numero di aggiornamenti temporali; durante il training aumenta anche la quantità di grafo computazionale attraverso cui deve essere propagato il gradiente. La letteratura hardware e metodologica identifica esplicitamente questa crescita della memoria BPTT come uno dei principali limiti del direct training su sequenze lunghe.
+
+Questo costituisce un altro collegamento con la sezione precedente. Una rappresentazione temporalmente più fine non richiede soltanto più calcolo in inferenza: può rendere significativamente più costoso anche lo sviluppo sperimentale del modello.
+
+\subsection{Direct training e conversione ANN-SNN}
+Il direct training non è l'unico paradigma con cui possono essere ottenute SNN profonde.
+
+Una parte importante della letteratura ha seguito una strategia differente: addestrare prima una ANN convenzionale e convertirne successivamente pesi e attivazioni in una rete spiking. In questo caso il firing rate dei neuroni viene utilizzato per approssimare le attivazioni continue del modello di origine.
+
+Questo approccio ha permesso storicamente di raggiungere accuratezze elevate senza dover ottimizzare direttamente attraverso la funzione di spike. Il prezzo è spesso una latenza temporale più elevata, poiché un numero sufficiente di timestep è necessario per rappresentare in modo accurato le attivazioni attraverso il firing rate. Lavori come RMP-SNN hanno infatti studiato specificamente come ridurre l'errore di conversione e il numero dei timestep necessari~\cite{han2020rmp}.
+
+Per la presente ricerca il direct training è però la scelta metodologicamente più naturale. L'obiettivo non consiste nel riprodurre mediante spike il comportamento di una ANN statica, ma nel lasciare che la dinamica neuronale stessa partecipi all'apprendimento di un problema temporale. Parametri quali la costante di membrana, l'evoluzione dello stato e le interazioni attraverso i timestep devono quindi appartenere al modello ottimizzato.
+
+La distinzione è importante anche per l'interpretazione dei risultati: uno spike train ottenuto come approssimazione temporale di un'attivazione ANN e uno spike train prodotto da una rete addestrata direttamente su dati dinamici possono possedere lo stesso formato ma avere un ruolo computazionale profondamente differente.
+
+\subsection{Quanto può contenere uno stato di membrana?}
+Arrivati a questo punto, è possibile precisare meglio il problema della memoria.
+
+Nel LIF, tutta l'informazione che il passato trasmette al presente attraverso un singolo neurone deve essere sintetizzata sostanzialmente in una variabile:
+\begin{equation*}
+V_t.
+\end{equation*}
+Nel PLIF, il filtro che determina l'evoluzione di questa variabile diventa adattabile, ma lo stato rimane comunque estremamente compatto.
+
+Questa caratteristica costituisce contemporaneamente una forza e un limite.
+
+È una forza perché il costo della memoria neuronale è molto contenuto: non è necessario conservare esplicitamente tutti gli ingressi precedenti. Il modello aggiorna ricorsivamente lo stato corrente:
+\begin{equation*}
+V_t = F(V_{t-1}, X_t)
+\end{equation*}
+e può eliminare $X_{t-1}$ una volta incorporato nello stato.
+
+È un limite perché tale compressione è irreversibile. Una volta che due diverse storie temporali hanno prodotto lo stesso stato $V_t$, il neurone non può più distinguerle sulla base del proprio potenziale corrente.
+
+In termini astratti, la dinamica realizza la mappa
+\begin{equation}
+\label{eq:mappa_compressione_stato}
+(X_1, X_2, \dots, X_t) \longrightarrow V_t.
+\end{equation}
+Il dominio della funzione contiene un'intera sequenza; il codominio, per ciascun neurone, contiene un solo stato scalare. La rete utilizza naturalmente moltissimi neuroni e quindi la rappresentazione globale è ad alta dimensionalità, ma il principio rimane: il passato viene continuamente compresso.
+
+Questa osservazione spiega perché la progettazione del neurone sia diventata essa stessa un'area attiva di ricerca.
+
+PLIF rende adattabile il decadimento~\cite{fang2021plif}. RMP modifica il reset per conservare informazione residua~\cite{han2020rmp}. Parallel Spiking Neuron (PSN) riformula la dinamica rimuovendo la dipendenza non lineare introdotta dal reset, con l'obiettivo di rendere più efficiente l'elaborazione di dipendenze lunghe e parallelizzare la simulazione temporale~\cite{fang2023parallel}.
+
+PMSN (Parallel Multi-compartment Spiking Neuron) compie un passo differente: anziché descrivere la dinamica attraverso un solo compartimento, introduce più sottostrutture interagenti per rappresentare simultaneamente differenti scale temporali~\cite{chen2024pmsn}. Gli autori motivano esplicitamente il modello con la difficoltà dei neuroni spiking convenzionali nel trattare pattern la cui informazione varia su più scale temporali~\cite{chen2024pmsn}.
+
+Una direzione ancora diversa è rappresentata da modelli con memoria strutturata. LMUFormer, per esempio, integra nelle SNN le Legendre Memory Units, nelle quali il passato viene rappresentato attraverso un vettore di stato governato da un sistema lineare
+\begin{equation}
+\label{eq:lmu_continuo}
+\dot{\mathbf{m}}(t) = \mathbf{A}\mathbf{m}(t) + \mathbf{B} u(t),
+\end{equation}
+progettato per catturare dipendenze temporali su orizzonti più lunghi rispetto alla ricorrenza convenzionale~\cite{liu2024lmuformer}. Nella versione discretizzata:
+\begin{equation}
+\label{eq:lmu_discreto}
+\mathbf{m}_t = \bar{\mathbf{A}}\mathbf{m}_{t-1} + \bar{\mathbf{B}}u_t.
+\end{equation}
+
+La differenza rispetto al LIF è immediata: la memoria non è più una singola quantità sottoposta a un decadimento, ma un vettore strutturato che conserva diverse componenti della storia del segnale. LMUFormer utilizza questa proprietà in un'architettura sequenziale e ne propone anche una variante spiking~\cite{liu2024lmuformer}.
+
+Non è necessario, in questa fase, stabilire quale di questi modelli neuronali o di memoria sia preferibile. La loro varietà serve a mettere in evidenza un fatto più importante: la dinamica temporale del neurone non è un dettaglio fisso delle SNN, ma una vera dimensione progettuale dell'architettura.
+
+Una dinamica più ricca comporta però normalmente anche uno stato più ricco, più parametri, maggiore complessità di training o una combinazione di questi fattori. Nel contesto di questa tesi, dove il footprint dello stato è rilevante tanto quanto il numero dei pesi, tale costo non può essere ignorato.
+
+Questa è la ragione per cui una modifica relativamente economica come PLIF e una memoria vettoriale strutturata come LMU non possono essere confrontate soltanto chiedendosi quale raggiunga l'accuracy maggiore. Esse occupano punti molto differenti nello spazio capacità--stato--computazione.
+
+\subsection{Dalla memoria locale alle relazioni tra rappresentazioni}
+Il quadro che emerge può essere riassunto attraverso una distinzione fondamentale.
+
+Un neurone LIF fornisce una memoria ricorrente e compressa:
+\begin{equation*}
+V_{t-1} \longrightarrow V_t.
+\end{equation*}
+PLIF permette di adattare la scala di tale memoria. Modelli multi-compartment o state-space aumentano la ricchezza dello stato. In tutti i casi, però, il principio rimane quello di trasferire nel presente una rappresentazione del passato.
+
+Esiste un'altra possibilità: invece di chiedere esclusivamente allo stato neuronale di trasportare tutte le informazioni necessarie, il modello può costruire relazioni esplicite tra rappresentazioni differenti.
+
+Le due strategie non sono alternative in senso stretto. Possono essere complementari:
+\begin{equation}
+\label{eq:complementarita_stato_attenzione}
+\underbrace{\text{stato neuronale}}_{\text{memoria locale}} \qquad+\qquad \underbrace{\text{interazione tra feature}}_{\text{relazioni strutturate}}.
+\end{equation}
+
+È proprio questa seconda capacità che ha reso i Transformer particolarmente potenti nel trattamento delle sequenze.
+
+La domanda che conduce alla sezione successiva diventa quindi naturale: se le SNN forniscono una memoria temporale efficiente ma fortemente strutturata, è possibile affiancarle un meccanismo capace di mettere direttamente in relazione rappresentazioni distanti senza rinunciare alla natura spike-driven della computazione?
+
+Da questa esigenza nasce l'incontro tra Spiking Neural Networks e Transformer.
+
+
+% ==============================================================================
+%  Dalle SNN agli Spiking Transformer
+% ==============================================================================
+
+
+
+\section{Dalle SNN agli Spiking Transformer}
+\label{sec:snn_spiking_transformer}
+
+La dinamica neuronale descritta nella sezione precedente fornisce alle SNN un meccanismo naturale per trasferire informazione da un timestep al successivo. Rimane però aperto un problema di natura differente. Conservare una traccia del passato non equivale a costruire relazioni tra le numerose feature che compongono una rappresentazione visiva. Un neurone LIF può integrare nel tempo il proprio ingresso, ma non possiede, per questa sola ragione, un meccanismo che gli permetta di stabilire quali regioni della scena siano reciprocamente rilevanti o quali feature debbano essere messe in relazione a lunga distanza.
+
+Le architetture convoluzionali affrontano tradizionalmente questo problema attraverso la composizione di operatori locali. Una convoluzione combina informazioni appartenenti a un intorno limitato; aumentando profondità e dimensione del campo recettivo, la rete costruisce progressivamente relazioni spaziali più estese. Questo principio ha reso le CNN estremamente efficaci nella visione artificiale e ha costituito anche la base di molte delle prime SNN profonde.
+
+Il Transformer introduce una prospettiva differente. Invece di affidare la costruzione delle dipendenze esclusivamente alla successione di operatori locali, permette agli elementi di una rappresentazione di interagire direttamente attraverso il meccanismo di self-attention~\cite{vaswani2017attention}. Quando questa idea viene trasferita alla visione, l'immagine viene suddivisa in elementi --- comunemente chiamati patch o, dopo la loro proiezione nello spazio delle feature, token --- che possono influenzarsi reciprocamente sulla base del contenuto che rappresentano~\cite{dosovitskiy2021image}.
+
+Supponendo di disporre di una matrice
+\begin{equation}
+\label{eq:token_matrix}
+X \in \mathbb{R}^{N \times D},
+\end{equation}
+dove $N$ è il numero dei token e $D$ la dimensione della rappresentazione associata a ciascuno di essi, la self-attention convenzionale costruisce tre proiezioni lineari,
+\begin{equation}
+\label{eq:qkv_projections}
+Q = X W_Q, \qquad K = X W_K, \qquad V = X W_V,
+\end{equation}
+denominate rispettivamente Query, Key e Value.
+
+Il prodotto tra Query e Key produce una matrice di similarità tra tutte le coppie di token:
+\begin{equation}
+\label{eq:attention_matrix_raw}
+A = \frac{Q K^{\top}}{\sqrt{d}},
+\end{equation}
+dove $d$ rappresenta la dimensione utilizzata nel calcolo dell'attenzione. Dopo la normalizzazione tramite softmax, la matrice ottenuta viene utilizzata per pesare i Value:
+\begin{equation}
+\label{eq:vanilla_softmax_attention}
+Y = \operatorname{softmax}\left( \frac{Q K^{\top}}{\sqrt{d}} \right) V.
+\end{equation}
+
+Il significato dell'operazione è intuitivo nonostante la sua formulazione compatta. Ogni token costruisce una rappresentazione aggiornata utilizzando informazioni provenienti dagli altri token, ma non li considera tutti allo stesso modo: il contributo di ciascuno dipende dalla compatibilità tra la Query del token corrente e le Key degli altri elementi.
+
+Questo meccanismo introduce una capacità che una semplice convoluzione non possiede nella stessa forma. Due regioni lontane nello spazio possono interagire direttamente in un singolo blocco di attenzione, senza che l'informazione debba attraversare una lunga successione di operatori locali.
+
+Il vantaggio ha però un costo.
+
+Poiché $Q K^{\top}$ confronta ogni token con tutti gli altri, la matrice di attenzione ha dimensione
+\begin{equation*}
+N \times N.
+\end{equation*}
+Il costo computazionale del prodotto cresce quindi quadraticamente con il numero dei token, approssimativamente come
+\begin{equation}
+\label{eq:complessita_quadratica_vsa}
+\mathcal{O}(N^2 D),
+\end{equation}
+e anche la memoria necessaria a materializzare la matrice di attenzione cresce come $\mathcal{O}(N^2)$.
+
+Nel caso di un Transformer convenzionale questa complessità rappresenta già un importante vincolo. Nel caso di una SNN temporale se ne aggiunge un secondo: le stesse operazioni devono essere ripetute attraverso i timestep. Per un input
+\begin{equation*}
+X \in \mathbb{R}^{T \times N \times D},
+\end{equation*}
+l'attenzione viene tipicamente applicata alle feature corrispondenti ai diversi istanti della simulazione. La dimensione temporale, che nelle sezioni precedenti costituiva la sorgente della memoria neuronale, diventa quindi anche un moltiplicatore del costo computazionale.
+
+L'incontro tra SNN e Transformer nasce precisamente da questa tensione. La self-attention offre una capacità relazionale estremamente interessante; la sua formulazione convenzionale, però, utilizza attivazioni continue, prodotti matrice-matrice, normalizzazioni e operazioni che non sfruttano direttamente la natura binaria e sparsa degli spike.
+
+Non è quindi sufficiente sostituire le attivazioni di un Transformer con neuroni LIF. Per ottenere uno Spiking Transformer occorre ripensare almeno parte del meccanismo di attenzione affinché la rappresentazione spiking non venga immediatamente riconvertita in una computazione sostanzialmente analoga a quella di una ANN.
+
+È da questo problema che prende forma Spikformer.
+
+Zhou et al. propongono nel 2023 la Spiking Self-Attention (SSA), mostrando che Query, Key e Value possono essere costruiti in forma spiking e che la softmax, elemento centrale dell'attenzione convenzionale, può essere eliminata~\cite{zhou2023spikformer}. Spikformer rappresenta un passaggio importante perché non si limita a inserire neuroni spiking in una struttura Transformer esistente: modifica il nucleo stesso dell'attenzione per renderlo compatibile con rappresentazioni binarie~\cite{zhou2023spikformer}.
+
+Lo schema generale rimane riconoscibile. A partire dalle feature spiking vengono costruite tre rappresentazioni
+\begin{equation}
+\label{eq:spiking_qkv}
+Q_s, \; K_s, \; V_s \in \{0, 1\}^{N \times D},
+\end{equation}
+e la relazione tra esse continua a svolgere il ruolo di attenzione. Una formulazione semplificata della SSA può essere espressa come
+\begin{equation}
+\label{eq:ssa_spikformer}
+\operatorname{SSA}(Q_s, K_s, V_s) = \operatorname{SN}\left( Q_s K_s^{\top} V_s \, \alpha \right),
+\end{equation}
+dove $\operatorname{SN}(\cdot)$ rappresenta la dinamica neuronale utilizzata per riportare il risultato in forma spiking e $\alpha$ è un fattore di scala. La formulazione precisa dipende dalla variante considerata, ma due idee sono centrali: Q, K e V possono essere rappresentati attraverso spike e la normalizzazione softmax non è necessaria. Lavori successivi riconoscono proprio questi due elementi come principi fondativi della prima generazione di attenzione spike-based.
+
+L'eliminazione della softmax è particolarmente significativa. Nella self-attention convenzionale essa richiede esponenziali, divisioni e una normalizzazione globale dei coefficienti. Queste operazioni risultano poco naturali in un paradigma nel quale l'obiettivo è sfruttare comunicazioni binarie e computazione event-driven.
+
+Spikformer dimostra quindi che self-attention e SNN non sono paradigmi incompatibili. Al tempo stesso, rende visibili nuove domande che in un Transformer convenzionale sono meno centrali.
+
+La prima riguarda la natura effettiva delle operazioni. Il fatto che Query, Key e Value siano spike non garantisce che l'intero blocco esegua soltanto operazioni economiche. I prodotti tra matrici binarie possono essere implementati attraverso accumuli condizionati, ma i risultati intermedi non rimangono necessariamente binari; inoltre, residual connection e trasformazioni successive possono reintrodurre valori multibit e quindi operazioni che non beneficiano pienamente del paradigma spike-driven.
+
+La seconda riguarda la scalabilità dell'attenzione. La struttura $Q K^{\top}$ mantiene una matrice di correlazione tra coppie di token. Anche se i dati sono sparsi, la dimensione logica dell'operazione resta legata a $N^2$. Quando il numero dei token cresce, questo costo diventa particolarmente rilevante.
+
+Questi due problemi hanno dato origine a linee di sviluppo differenti ma complementari.
+
+Una prima linea si concentra sulla domanda:
+\begin{center}
+\emph{quanto della rete è realmente spike-driven?}
+\end{center}
+
+Spike-driven Transformer affronta direttamente questo punto~\cite{yao2023spikedriven}. Gli autori osservano che diverse architetture precedenti combinano operazioni AC dovute agli spike con operazioni MAC ereditate dal Transformer, producendo una forma di computazione ibrida. Il loro obiettivo non consiste quindi soltanto nel rendere spiking Q, K e V, ma nel mantenere il più possibile binaria la comunicazione tra i blocchi e fare in modo che l'assenza di spike corrisponda effettivamente all'assenza di computazione.
+
+Il meccanismo proposto, denominato Spike-Driven Self-Attention (SDSA), abbandona il prodotto completo $Q K^{\top}$. Una delle sue formulazioni può essere espressa come
+\begin{equation}
+\label{eq:sdsa_vector}
+A_s = \operatorname{SN}\left( \operatorname{SUM}_N \left( Q_s \odot K_s \right) \right),
+\end{equation}
+seguita dall'applicazione del vettore di attenzione ai Value,
+\begin{equation}
+\label{eq:sdsa_value}
+Y_s = A_s \odot V_s,
+\end{equation}
+dove $\odot$ indica un prodotto elemento per elemento che, quando gli operandi sono spike binari, può essere interpretato come un'operazione di mascheramento.
+
+L'idea è sostanzialmente diversa dall'equazione~\eqref{eq:vanilla_softmax_attention}. Non viene costruita una matrice completa $N \times N$ di relazioni pairwise. L'interazione tra gli spike viene prima ridotta attraverso mascheramento e somma, producendo un vettore binario che seleziona le feature rilevanti. SDSA può per questo essere interpretata come una particolare forma di attenzione lineare, con complessità lineare rispetto a token e canali anziché quadratica rispetto al numero dei token~\cite{yao2023spikedriven}.
+
+La differenza tra le due filosofie può essere rappresentata schematicamente come
+\begin{align}
+\label{eq:vsa_vs_sdsa}
+\text{VSA:} & \qquad Q K^{\top} \longrightarrow N \times N \text{ attention map}, \nonumber \\
+\text{SDSA:} & \qquad Q \odot K \longrightarrow \text{summation} \longrightarrow \text{binary attention vector}.
+\end{align}
+
+Si perde parte della ricchezza delle correlazioni pairwise, ma si ottiene un'operazione molto più favorevole alla computazione sparsa. Lo stesso lavoro riporta che le operazioni tra spike-form Query, Key e Value possono essere realizzate attraverso mask e accumuli sparsi, evitando la matrice di attenzione convenzionale.
+
+\begin{figure}[htbp]
+    \centering
+    % \includegraphics[width=0.95\textwidth]{images/placeholder_fig2_5.pdf}
+    \rule{0.9\textwidth}{4.8cm} % Box segnaposto per Fig 2.5
+    \caption{Progressiva riformulazione della self-attention nel dominio spiking. Spikformer introduce Query, Key e Value in forma spiking ed elimina la softmax; Spike-driven Transformer sostituisce ulteriormente la correlazione pairwise con operazioni di mascheramento e accumulo, privilegiando una computazione lineare e spike-driven.}
+    \label{fig:evoluzione_self_attention_spiking}
+\end{figure}
+
+Spike-driven Transformer introduce inoltre un elemento meno appariscente, ma importante per comprendere l'evoluzione di queste architetture: la posizione delle residual connection.
+
+Una residual connection permette di sommare l'ingresso di un blocco alla trasformazione prodotta dal blocco stesso. Nelle reti profonde questa struttura facilita la propagazione dell'informazione e dei gradienti. In una SNN, però, non è indifferente stabilire se la somma avvenga tra spike oppure tra potenziali di membrana.
+
+Nel Spike-Element-Wise residual utilizzato da Spikformer, la somma di due tensori binari può produrre valori
+\begin{equation*}
+0, \; 1, \; 2,
+\end{equation*}
+e concatenando più blocchi il range può ulteriormente aumentare. Il segnale che attraversa il residual path non è quindi più necessariamente binario. Quando viene utilizzato come input di uno strato pesato successivo, la semplice selezione degli spike attivi può non essere sufficiente e vengono reintrodotte moltiplicazioni integer-float.
+
+Spike-driven Transformer sposta invece la residual connection sul potenziale di membrana, collocando la funzione spiking dopo la somma. La comunicazione verso il blocco successivo rimane così binaria~\cite{yao2023spikedriven}.
+
+Questo dettaglio offre una lezione progettuale più generale: non basta contare quanti neuroni spiking compaiano in un'architettura. L'effettiva natura event-driven dipende da dove si trovano tali neuroni rispetto alle operazioni lineari e ai percorsi residuali.
+
+Una linea parallela di ricerca ha approfondito proprio questo punto. Spikingformer analizza esplicitamente le residual connection di Spikformer e combina una Membrane Shortcut con una self-attention globale, con l'obiettivo di mantenere simultaneamente comunicazione spike-driven e capacità di modellazione globale~\cite{zhou2026spikingformer}. Gli autori mostrano come la SEW residual utilizzata in Spikformer possa generare valori multibit lungo i shortcut, mentre la MS residual preserva spike binari all'ingresso degli operatori successivi.
+
+Il confronto è utile soprattutto perché mette in evidenza un compromesso che accompagnerà l'intera evoluzione degli Spiking Transformer. Una semplificazione molto aggressiva dell'attenzione può ridurre il costo, ma anche ridurre la ricchezza delle relazioni rappresentabili; mantenere una self-attention più globale può offrire maggiore espressività, ma richiede di intervenire altrove per preservare l'efficienza spike-driven.
+
+La storia degli Spiking Transformer non è quindi una progressiva sostituzione di un modello con uno necessariamente ``migliore''. È piuttosto l'esplorazione di uno spazio con almeno tre assi:
+\begin{equation}
+\label{eq:tre_assi_spiking_transformer}
+\boxed{\text{capacità relazionale} \qquad \text{scalabilità} \qquad \text{purezza spike-driven}}
+\end{equation}
+
+Spikformer dimostra che la self-attention può essere resa spiking.
+
+Spike-driven Transformer mostra che l'attenzione può essere profondamente riformulata per eliminare una parte rilevante delle operazioni non event-driven.
+
+Spikingformer evidenzia che anche i percorsi residuali sono parte integrante del problema e cerca di preservare una modellazione globale senza perdere la comunicazione binaria.
+
+Rimane però aperta una questione differente: come scalare l'architettura stessa?
+
+Una Vision Transformer tradizionale utilizza spesso una rappresentazione a risoluzione costante attraverso gran parte dell'encoder. Molte prime architetture Spiking Transformer seguono una strategia analoga: un modulo iniziale produce una sequenza di token e i blocchi successivi operano prevalentemente sulla stessa granularità spaziale. Spikformer, per esempio, utilizza uno Spiking Patch Splitting per convertire la sequenza di input in $N$ token di dimensione $D$, che vengono poi elaborati dai blocchi SSA e MLP.
+
+Questa soluzione è concettualmente semplice, ma differisce dalla struttura gerarchica che ha caratterizzato molte CNN e numerosi Vision Transformer moderni. In una rete gerarchica, le prime fasi operano su molte posizioni con pochi canali, mentre le fasi profonde utilizzano un numero minore di token ma feature più ricche.
+
+La struttura può essere rappresentata schematicamente come
+\begin{equation}
+\label{eq:gerarchia_token_canali}
+(N_1, D_1) \longrightarrow (N_2, D_2) \longrightarrow (N_3, D_3),
+\end{equation}
+con
+\begin{equation*}
+N_1 > N_2 > N_3, \qquad D_1 < D_2 < D_3.
+\end{equation*}
+
+Questa progressione possiede due vantaggi. Da un lato consente di mantenere dettagli spaziali nelle prime fasi e costruire rappresentazioni progressivamente più astratte; dall'altro riduce il numero dei token proprio negli strati nei quali la dimensionalità delle feature e il costo dei blocchi Transformer tendono ad aumentare.
+
+QKFormer nasce da questa esigenza~\cite{zhou2024qkformer}.
+
+Gli autori identificano due limiti congiunti delle architetture precedenti: la complessità quadratica della SSA rispetto al numero dei token e l'elevato costo di memoria dovuto alla combinazione tra dimensione spaziale e simulazione temporale. Per affrontarli introducono una struttura gerarchica e un nuovo meccanismo, denominato Q-K Attention, che sostituisce la matrice di attenzione con vettori binari capaci di modellare l'importanza dei token oppure dei canali.
+
+L'idea rappresenta un ulteriore passaggio rispetto a SDSA. Invece di chiedersi soltanto come rendere più economico il prodotto tra Q, K e V, QKFormer domanda se sia necessario utilizzare tutte e tre le componenti per costruire il meccanismo di selezione.
+
+Nella Q-K Attention vengono utilizzate soltanto Query e Key. A seconda della variante, una delle due viene aggregata lungo la dimensione dei canali o dei token, trasformata da un neurone spiking in un vettore binario e utilizzata per mascherare l'altra.
+
+Si ottengono così due possibili prospettive:
+\begin{align}
+\label{eq:qkta_vs_qkca}
+\text{Q-K Token Attention} & \quad\Rightarrow\quad \text{quali token sono rilevanti?} \nonumber \\
+\text{e} & \\
+\text{Q-K Channel Attention} & \quad\Rightarrow\quad \text{quali canali sono rilevanti?} \nonumber
+\end{align}
+
+Il risultato non è una matrice densa di relazioni tra tutte le coppie di token, ma un vettore di attenzione. La complessità diventa quindi lineare rispetto alla dimensione su cui opera il meccanismo e l'elaborazione continua a basarsi su spike binari, somme e mascheramenti.
+
+QKFormer combina questa attenzione con una struttura a più stadi. Partendo da patch relativamente piccole, il numero di token viene progressivamente ridotto attraverso moduli di Spiking Patch Embedding with Deformed Shortcut (SPEDS), mentre il numero dei canali aumenta negli stadi più profondi. Nella configurazione descritta dagli autori, per esempio, la progressione spaziale segue approssimativamente
+\begin{equation}
+\label{eq:progressione_spaziale_speds}
+\frac{H}{4} \times \frac{W}{4} \longrightarrow \frac{H}{8} \times \frac{W}{8} \longrightarrow \frac{H}{16} \times \frac{W}{16}.
+\end{equation}
+
+Poiché il rapporto tra numero dei token e numero dei canali cambia lungo la rete, gli autori non applicano necessariamente lo stesso tipo di attenzione a ogni livello: Q-K Token Attention risulta particolarmente adatta alle prime fasi, dove i token sono numerosi e i canali relativamente pochi; nelle fasi profonde possono essere impiegate Q-K Channel Attention o SSA.
+
+\begin{figure}[htbp]
+    \centering
+    % \includegraphics[width=0.95\textwidth]{images/placeholder_fig2_6.pdf}
+    \rule{0.9\textwidth}{4.8cm} % Box segnaposto per Fig 2.6
+    \caption{Principali passaggi concettuali nell'evoluzione degli Spiking Transformer rilevanti per questa tesi. I diversi lavori affrontano progressivamente compatibilità della self-attention con gli spike, purezza event-driven, residual learning e scalabilità del meccanismo di attenzione.}
+    \label{fig:evoluzione_architetturale_spiking_transformer}
+\end{figure}
+
+Questo percorso rende evidente perché QKFormer costituisca un punto di partenza particolarmente interessante per il lavoro sviluppato nella presente tesi. Non si limita ad adattare un Transformer al dominio spiking: integra tre proprietà utili nel regime compatto che verrà studiato successivamente --- attenzione lineare, rappresentazione gerarchica e trasmissione residuale attraverso i cambiamenti di risoluzione.
+
+È però altrettanto importante osservare quale problema QKFormer non si propone principalmente di risolvere.
+
+Le operazioni di attenzione descritte finora costruiscono relazioni tra token o canali all'interno delle feature appartenenti a un certo timestep. In presenza di una sequenza
+\begin{equation*}
+X_1, X_2, \dots, X_T,
+\end{equation*}
+l'attenzione applicata al tempo $t$ riceve tipicamente
+\begin{equation*}
+X_t
+\end{equation*}
+e modella le relazioni interne a tale rappresentazione. La comunicazione tra
+\begin{equation*}
+X_{t-1} \quad\text{e}\quad X_t
+\end{equation*}
+rimane invece affidata principalmente agli stati dei neuroni spiking che attraversano il tempo.
+
+Questa osservazione non costituisce una critica a QKFormer: il lavoro affronta soprattutto efficienza, scalabilità e qualità della rappresentazione spaziale spiking. È però esattamente il punto nel quale il percorso della letteratura incontra il problema della presente tesi.
+
+In termini schematici, l'evoluzione esaminata finora ha progressivamente migliorato
+\begin{center}
+\framebox{come le feature interagiscono all'interno di $X_t$}
+\end{center}
+e
+\begin{center}
+\framebox{quanto costa costruire tali interazioni.}
+\end{center}
+
+Rimane da chiedersi se la dinamica neuronale studiata nella sezione~2.2 sia sufficiente per governare anche
+\begin{equation}
+\label{eq:interazione_temporale_xt}
+\boxed{\text{come } X_t \text{ interagisce con } X_{t-k}.}
+\end{equation}
+
+Questa distinzione è particolarmente importante perché l'espressione self-attention può facilmente suggerire, in maniera intuitiva ma imprecisa, che il modello possieda automaticamente accesso globale alla sequenza. La globalità dell'attenzione va invece sempre riferita alla dimensione sulla quale l'operatore viene applicato.
+
+Uno Spiking Transformer può possedere attenzione globale sui token e, allo stesso tempo, una comunicazione temporale prevalentemente ricorrente e locale.
+
+È proprio questa separazione tra global modeling nello spazio delle feature e interaction modeling lungo il tempo che motiverà, nella sezione~2.5, l'analisi delle architetture specificamente progettate per temporal attention, multi-delay mixing, memoria strutturata e rappresentazioni multi-granulari.
+
+Prima di affrontare tale problema è però utile fermarsi sul punto di arrivo di questa evoluzione. QKFormer non è soltanto uno dei lavori più performanti della famiglia: la sua combinazione di struttura gerarchica e Q-K Attention determina direttamente la baseline da cui prende avvio la parte sperimentale della tesi.
+
+Per questo motivo la sezione successiva ne analizzerà più attentamente il funzionamento.
+
+\begin{table}[htbp]
+\centering
+\small
+\renewcommand{\arraystretch}{1.2}
+\caption{Evoluzione dei meccanismi di attenzione spiking rilevanti per il lavoro.}
+\label{tab:evoluzione_attenzione_spiking}
+\begin{tabular}{p{2.6cm} p{2.4cm} p{2.2cm} p{1.8cm} p{2cm} c}
+\hline
+\textbf{Architettura} & \textbf{Problema affrontato} & \textbf{Meccanismo caratteristico} & \textbf{Interazione principale} & \textbf{Complessità dell'attenzione} & \textbf{Spike-driven} \\
+\hline
+Transformer / ViT & Relazioni globali tra token & VSA + softmax & Token--token & Quadratica in $N$ & No \\
+Spikformer & Rendere spiking la self-attention & SSA con Q, K, V spiking & Token--token & Quadratica in $N$ & Parziale \\
+Spike-driven Transformer & Eliminare operazioni non spike-driven e ridurre il costo & SDSA, mask + sparse additions & Selezione di feature/canali & Lineare & Sì \\
+Spikingformer & Preservare global attention mantenendo residual spike-driven & Self-attention + MS residual & Token--token & Dipendente dalla SSA & Sì \\
+QKFormer & Scalabilità e rappresentazione gerarchica & QKTA/QKCA + SPEDS & Token o channel importance & Lineare nella dimensione & Sì \\
+\hline
+\end{tabular}
+\vspace{0.4em}
+\begin{flushleft}
+\footnotesize
+\emph{Nota:} «Spike-driven» indica qui la proprietà architetturale dichiarata dai rispettivi lavori; il costo effettivo dipende comunque da firing rate, operatori periferici, rappresentazione degli input e piattaforma hardware e verrà discusso nella sezione~2.6.
+\end{flushleft}
+\end{table}
+
+
+% ==============================================================================
+%  QKFormer come riferimento architetturale
+% ==============================================================================
+
+
+\section{QKFormer come riferimento architetturale}
+\label{sec:qkformer_riferimento}
+
+Il percorso sviluppato nelle sezioni precedenti conduce a QKFormer per una ragione precisa. Le architetture precedenti avevano già mostrato che la self-attention poteva essere trasferita nel dominio spiking e che una parte consistente della computazione poteva essere riformulata attraverso spike binari, mascheramenti e accumuli. Rimaneva tuttavia difficile combinare questa idea con una struttura realmente gerarchica. La causa è soprattutto computazionale: quando il numero dei token è elevato, una self-attention basata su correlazioni pairwise richiede memoria e calcolo che crescono rapidamente; nelle SNN questo costo viene inoltre replicato lungo la dimensione temporale. QKFormer nasce proprio dall'esigenza di rendere possibile una rappresentazione gerarchica senza rinunciare alla natura spike-driven dell'attenzione~\cite{zhou2024qkformer}.
+
+Il modello proposto da Zhou et al. può essere letto come l'integrazione di tre idee~\cite{zhou2024qkformer}. La prima è la Q-K Attention, che sostituisce la matrice completa delle relazioni tra token con un vettore binario di importanza. La seconda è una struttura gerarchica multi-stage, nella quale la risoluzione spaziale viene progressivamente ridotta mentre aumenta il numero dei canali. La terza è lo Spiking Patch Embedding with Deformed Shortcut (SPEDS), progettato per accompagnare i cambiamenti di risoluzione evitando che il downsampling interrompa il flusso residuale dell'informazione. Questi tre elementi non sono indipendenti: l'attenzione lineare rende praticabile la gerarchia, mentre SPEDS permette di attraversarne i cambiamenti dimensionali senza rinunciare al residual learning.
+
+Per comprenderne il funzionamento conviene partire dalla Q-K Attention.
+
+Sia la self-attention convenzionale sia la SSA di Spikformer utilizzano tre rappresentazioni, Query, Key e Value~\cite{zhou2023spikformer}. QKFormer elimina invece la componente Value dal calcolo dell'attenzione e costruisce due sole proiezioni spiking~\cite{zhou2024qkformer}:
+\begin{equation}
+\label{eq:qk_projections_qkformer}
+Q = \operatorname{SN}_{Q} \left( \operatorname{BN}(XW_Q) \right), \qquad K = \operatorname{SN}_{K} \left( \operatorname{BN}(XW_K) \right),
+\end{equation}
+con
+\begin{equation*}
+Q, K \in \{0, 1\}^{T \times N \times D},
+\end{equation*}
+dove $T$ indica il numero dei timestep, $N$ il numero dei token e $D$ la dimensionalità delle feature. Le trasformazioni lineari rimangono apprendibili, ma le rappresentazioni utilizzate dal successivo meccanismo di selezione sono spike binari.
+
+La differenza rispetto alla self-attention tradizionale è più profonda della semplice eliminazione di $V$. Non viene costruita una matrice
+\begin{equation*}
+A \in \mathbb{R}^{N \times N}
+\end{equation*}
+che descriva la relazione di ogni token con tutti gli altri. QKFormer pone invece una domanda più economica: quali token --- oppure quali canali --- meritano di attraversare il blocco di attenzione?
+
+Da questa scelta derivano le due varianti Q-K Token Attention e Q-K Channel Attention.
+
+Nella Q-K Token Attention (QKTA), per ciascun token vengono sommati gli spike della relativa Query lungo la dimensione dei canali. Considerando per semplicità un singolo timestep,
+\begin{equation*}
+Q \in \{0, 1\}^{N \times D},
+\end{equation*}
+si può scrivere
+\begin{equation}
+\label{eq:qkta_somma_canali}
+r_n = \sum_{d=1}^{D} Q_{n,d}, \qquad n = 1, \dots, N.
+\end{equation}
+Il valore $r_n$ misura quindi quanta attività sia presente nella Query associata al token $n$. Il vettore ottenuto viene sottoposto a un neurone spiking:
+\begin{equation}
+\label{eq:qkta_vettore_attenzione}
+A_t = \operatorname{SN} \left( \sum_{d=1}^{D} Q_{:,d} \right), \qquad A_t \in \{0, 1\}^{N \times 1}.
+\end{equation}
+$A_t$ costituisce un token attention vector binario. Ogni sua componente stabilisce se il corrispondente token debba essere lasciato passare oppure mascherato.
+
+L'attenzione viene quindi applicata alla Key attraverso un prodotto di Hadamard con broadcasting:
+\begin{equation}
+\label{eq:qkta_mascheramento}
+X' = A_t \odot K.
+\end{equation}
+Poiché $A_t$ è binario, l'operazione non richiede una moltiplicazione generale. Per ogni token, il risultato equivale sostanzialmente a
+\begin{equation}
+\label{eq:qkta_selezione_token}
+X'_n = 
+\begin{cases} 
+K_n, & A_{t,n} = 1, \\ 
+0, & A_{t,n} = 0. 
+\end{cases}
+\end{equation}
+Il meccanismo può quindi essere interpretato come una selezione spike-driven dei token.
+
+L'intuizione è importante. Nella self-attention convenzionale il token $i$ costruisce la propria uscita come combinazione pesata di molti altri token. QKTA non tenta di rappresentare tutta questa struttura pairwise. Utilizza invece l'attività della Query per decidere quali token della Key siano rilevanti.
+
+La riduzione della complessità deriva proprio da questa rinuncia deliberata alla matrice $N \times N$.
+
+Il paper distingue correttamente tra il costo dell'intero blocco e quello dell'operazione di attenzione propriamente detta~\cite{zhou2024qkformer}. L'archiviazione di $Q$ e $K$ richiede comunque quantità dell'ordine di $ND$, e le proiezioni lineari non scompaiono. Tuttavia, il meccanismo che costruisce l'attenzione necessita soltanto di un vettore $N \times 1$. Utilizzando direttamente il mascheramento, l'operazione di attenzione QKTA ha complessità lineare nella dimensione dei canali utilizzata per la riduzione e richiede soltanto $\mathcal{O}(N)$ memoria aggiuntiva per il vettore di selezione, invece della matrice $\mathcal{O}(N^2)$ richiesta da SSA. Gli autori riportano infatti per QKTA una complessità dell'attenzione $\mathcal{O}(D)$, contro $\mathcal{O}(N^2 D)$ della vanilla self-attention e della SSA, fermo restando il costo delle trasformazioni che circondano l'operatore~\cite{zhou2024qkformer}.
+
+La Q-K Channel Attention (QKCA) applica lo stesso principio ruotando, per così dire, la domanda.
+
+Invece di stabilire quali token siano importanti, somma la Query lungo l'asse dei token:
+\begin{equation}
+\label{eq:qkca_somma_token}
+c_d = \sum_{n=1}^{N} Q_{n,d}, \qquad d = 1, \dots, D,
+\end{equation}
+e produce
+\begin{equation}
+\label{eq:qkca_vettore_canali}
+A_c = \operatorname{SN} \left( \sum_{n=1}^{N} Q_{n,:} \right), \qquad A_c \in \{0, 1\}^{1 \times D}.
+\end{equation}
+Il vettore $A_c$ descrive così l'importanza binaria dei canali. Applicandolo alla Key,
+\begin{equation}
+\label{eq:qkca_mascheramento}
+X' = A_c \odot K,
+\end{equation}
+vengono mantenuti o eliminati interi canali della rappresentazione.
+
+Le due versioni implementano pertanto lo stesso principio su assi differenti:
+\begin{equation}
+\label{eq:qkta_vs_qkca_domande}
+\boxed{
+\begin{aligned}
+\mathrm{QKTA}:&\quad \text{quali posizioni spaziali sono rilevanti?} \\
+\mathrm{QKCA}:&\quad \text{quali feature channels sono rilevanti?}
+\end{aligned}
+}
+\end{equation}
+
+Questa formulazione permette di capire perché Q-K Attention sia particolarmente adatta a una rete gerarchica. Il rapporto tra $N$ e $D$ non rimane infatti costante lungo il backbone.
+
+\begin{figure}[htbp]
+    \centering
+    % \includegraphics[width=0.95\textwidth]{images/placeholder_fig2_7.pdf}
+    \rule{0.9\textwidth}{5cm} % Box segnaposto per Fig 2.7
+    \caption{Principio della Q-K Attention. QKTA comprime la Query lungo i canali e costruisce una maschera binaria sui token; QKCA la comprime lungo i token e costruisce una maschera sui canali. In entrambi i casi l'attenzione evita la costruzione della matrice pairwise $N \times N$.}
+    \label{fig:qk_attention_principio}
+\end{figure}
+
+Dopo il mascheramento, QKFormer applica comunque una trasformazione lineare all'uscita~\cite{zhou2024qkformer}:
+\begin{equation}
+\label{eq:qk_proiezione_lineare_uscita}
+X'' = \operatorname{SN} \left( \operatorname{BN} \left( \operatorname{Linear}(X') \right) \right).
+\end{equation}
+La Q-K Attention non deve quindi essere interpretata come l'intero blocco Transformer ridotto a una maschera. La maschera costituisce il token mixer o channel selector; la successiva proiezione permette di ricombinarne le feature.
+
+Un secondo elemento interessante riguarda l'assenza di un fattore di scaling analogo a quello presente nella vanilla self-attention o nella SSA. Nella self-attention convenzionale il prodotto $Q K^{\top}$ può crescere in varianza con la dimensionalità e viene quindi normalizzato attraverso $1/\sqrt{d}$. Anche nelle SSA spiking, nonostante l'assenza della softmax, la somma di numerosi prodotti binari può generare valori sufficientemente grandi da richiedere un fattore di scala. Gli autori di QKFormer mostrano analiticamente e sperimentalmente che l'aggregazione utilizzata da Q-K Attention produce una distribuzione con varianza molto più contenuta; nella loro analisi, la massima varianza teorica di QKTA risulta drasticamente inferiore a quella della SSA~\cite{zhou2024qkformer}. Questo permette di eliminare anche l'operazione di scaling dal percorso di attenzione.
+
+L'insieme di queste semplificazioni rende possibile il secondo elemento caratteristico del modello: la gerarchia.
+
+Per un input neuromorfico, QKFormer assume una rappresentazione iniziale della forma
+\begin{equation}
+\label{eq:input_neuromorfico_qkformer}
+X_0 \in \mathbb{R}^{T \times H \times W \times n},
+\end{equation}
+dove $T$ è il numero dei timestep e $n = 2$ corrisponde ai due canali di polarità~\cite{zhou2024qkformer}. Nel caso di immagini statiche gli autori utilizzano invece $T_0 = 1$ e $n = 3$~\cite{zhou2024qkformer}.
+
+Il primo modulo di patch embedding, SPEDS-1, utilizza patch spaziali $4 \times 4$~\cite{zhou2024qkformer}. La rappresentazione prodotta dal primo stage possiede quindi dimensione
+\begin{equation}
+\label{eq:dimensione_stage1}
+T \times \frac{H}{4} \times \frac{W}{4} \times C.
+\end{equation}
+Il numero dei token è
+\begin{equation}
+\label{eq:numero_token_stage1}
+N_1 = \frac{H}{4} \frac{W}{4}.
+\end{equation}
+SPEDS-2 applica un ulteriore downsampling $2 \times 2$, portando la rappresentazione a
+\begin{equation}
+\label{eq:dimensione_stage2}
+T \times \frac{H}{8} \times \frac{W}{8} \times 2C,
+\end{equation}
+mentre SPEDS-3 produce
+\begin{equation}
+\label{eq:dimensione_stage3}
+T \times \frac{H}{16} \times \frac{W}{16} \times 4C.
+\end{equation}
+Procedendo nella rete, il numero delle posizioni spaziali diminuisce quindi di un fattore quattro a ogni downsampling, mentre il numero dei canali raddoppia.
+
+La gerarchia segue il principio
+\begin{equation}
+\label{eq:principio_gerarchia}
+N \downarrow \qquad\text{e}\qquad D \uparrow.
+\end{equation}
+
+Questo non rappresenta soltanto un modo per ridurre la computazione. Gli stage iniziali mantengono una rappresentazione spaziale relativamente fine; gli stage successivi sacrificano progressivamente la localizzazione precisa in favore di feature più numerose e semanticamente più elaborate. È lo stesso principio generale che ha reso efficaci le architetture gerarchiche nella visione convenzionale, ma qui viene realizzato mantenendo una rappresentazione spiking lungo il backbone.
+
+La variazione del rapporto $N/D$ ha inoltre una conseguenza diretta sul tipo di attenzione conveniente.
+
+Nel primo stage,
+\begin{equation*}
+N \gg D
+\end{equation*}
+è una situazione plausibile: sono presenti molti token spaziali ma relativamente pochi canali. In questo regime QKTA è particolarmente naturale, perché comprime la dimensione dei canali per costruire una decisione sui token.
+
+Nei livelli profondi la situazione tende progressivamente a invertirsi:
+\begin{equation*}
+N \downarrow, \qquad D \uparrow.
+\end{equation*}
+Un solo meccanismo di attenzione non è quindi necessariamente ottimale in tutti gli stage.
+
+QKFormer utilizza per questo una Mixed Spiking Attention Integration~\cite{zhou2024qkformer}. Nella configurazione predefinita descritta dagli autori, QKTA viene utilizzata negli stage iniziali, mentre nell'ultimo stage viene reintrodotta la SSA~\cite{zhou2024qkformer}. QKCA costituisce un'altra possibilità per gli stadi nei quali i canali sono numerosi e i token pochi.
+
+Questa scelta è supportata dagli esperimenti di ablazione~\cite{zhou2024qkformer}. Utilizzare esclusivamente QKTA o esclusivamente QKCA produce risultati inferiori rispetto alle combinazioni miste; configurazioni quali QKTA+SSA, QKCA+SSA o QKTA+QKCA raggiungono invece prestazioni comparabili alla soluzione con sola SSA, richiedendo meno parametri e soprattutto meno memoria per l'attenzione~\cite{zhou2024qkformer}. Sul CIFAR10-DVS, per esempio, la configurazione QKTA+SSA riportata dagli autori raggiunge $84{,}0\%$ con circa $1{,}50$ milioni di parametri, mentre le varianti basate su un solo tipo di Q-K Attention scendono all'$80{,}7\%$~\cite{zhou2024qkformer}.
+
+Il risultato suggerisce un principio che sarà importante anche nel resto della tesi: l'operatore più efficiente non deve necessariamente essere applicato uniformemente a tutta la rete. Una architettura gerarchica modifica la natura della rappresentazione lungo la profondità e può quindi beneficiare di operatori differenti nei diversi stage.
+
+La struttura di un generico blocco QKFormer rimane, nonostante queste modifiche, vicina a quella di un Transformer encoder. Indicando con $X_{l-1}$ l'ingresso del blocco,
+\begin{align}
+\label{eq:blocco_qkformer_qka}
+X'_l &= \operatorname{QKA}(X_{l-1}) + X_{l-1}, \\
+\label{eq:blocco_qkformer_smlp}
+X_l &= \operatorname{SMLP}(X'_l) + X'_l,
+\end{align}
+dove QKA può indicare QKTA o QKCA e SMLP è lo Spiking Multi-Layer Perceptron~\cite{zhou2024qkformer}. Entrambi i sottoblocchi mantengono un collegamento residuale.
+
+\begin{figure}[htbp]
+    \centering
+    % \includegraphics[width=0.95\textwidth]{images/placeholder_fig2_8.pdf}
+    \rule{0.9\textwidth}{5.2cm} % Box segnaposto per Fig 2.8
+    \caption{Struttura gerarchica di QKFormer. La risoluzione spaziale viene progressivamente ridotta attraverso SPEDS, mentre aumenta la dimensionalità dei canali. Nella configurazione predefinita QKTA viene utilizzata negli stage ad alta numerosità di token e SSA nello stage finale. La dimensione temporale $T$ viene preservata lungo il backbone.}
+    \label{fig:struttura_gerarchica_qkformer}
+\end{figure}
+
+La figura renderebbe visibile un aspetto che rischia altrimenti di perdersi tra le equazioni: la gerarchia di QKFormer è spaziale e di canale, non temporale.
+
+Prima di arrivare a questo punto, però, occorre analizzare SPEDS, perché è il componente che rende possibile il passaggio tra gli stage.
+
+Un normale residual shortcut assume che ingresso e uscita abbiano dimensioni compatibili. Un modulo di patch embedding gerarchico modifica invece sia il numero dei token sia quello dei canali. Non è quindi possibile sommare direttamente l'ingresso alla trasformazione prodotta dal downsampling.
+
+QKFormer introduce una proiezione leggera $W_d$ sul percorso residuale, ottenendo~\cite{zhou2024qkformer}
+\begin{equation}
+\label{eq:speds_formulazione}
+Y = \mathcal{F}(X, \{W_i\}) + \operatorname{SN}(W_d X).
+\end{equation}
+$W_d$ è realizzato nel lavoro originale attraverso una convoluzione $1 \times 1$ con stride superiore a uno, in modo da adeguare simultaneamente risoluzione e numero dei canali~\cite{zhou2024qkformer}. Il ramo principale $\mathcal{F}$ utilizza invece una sequenza di convoluzioni, batch normalization, neuroni spiking e max-pooling~\cite{zhou2024qkformer}. Gli autori riportano due possibili ordinamenti degli operatori, entrambi progettati per ottenere la nuova risoluzione mantenendo un percorso residuale attraverso il downsampling~\cite{zhou2024qkformer}.
+
+Il termine deformed shortcut deriva precisamente dal fatto che il shortcut non può più essere una identity map pura: deve essere ``deformato'' per portare l'ingresso nello stesso spazio dimensionale dell'uscita.
+
+Il razionale è semplice. Senza shortcut, ogni patch embedding costituisce un collo di bottiglia attraverso il quale l'intera rappresentazione deve essere ricostruita. Con SPEDS, una parte dell'informazione possiede invece un percorso diretto attraverso il cambiamento di scala.
+
+L'utilità del modulo non è soltanto teorica. Negli esperimenti originali, sostituire SPEDS con il precedente Spiking Patch Splitting degrada le prestazioni; inserire SPEDS in Spikformer migliora sia CIFAR100 sia CIFAR10-DVS~\cite{zhou2024qkformer}. Gli autori riportano, per esempio, un passaggio dall'$80{,}90\%$ all'$82{,}20\%$ su CIFAR10-DVS quando SPEDS viene aggiunto a Spikformer~\cite{zhou2024qkformer}.
+
+Questo risultato rende SPEDS un elemento importante del successo di QKFormer, ma introduce anche una considerazione che diventerà rilevante quando l'architettura verrà portata in un regime molto più compatto: il patch embedding non è un componente gratuito.
+
+La struttura gerarchica sposta infatti una parte consistente dell'elaborazione verso i moduli di transizione tra le scale. Ridurre la risoluzione richiede convoluzioni, normalizzazioni, pooling, neuroni spiking e un ramo residuale proiettato. Analisi successive della stessa famiglia architetturale hanno evidenziato come, in QKFormer, gli stage di patch embedding possano rappresentare una componente importante del costo energetico complessivo. Questo aspetto sarà ripreso nella sezione dedicata all'efficienza hardware; per il momento è sufficiente osservare che una struttura progettata per ridurre il costo dell'attenzione può spostare una parte del budget verso il front-end gerarchico.
+
+È precisamente il tipo di trade-off che diventa visibile quando si scende da modelli di milioni o decine di milioni di parametri a un regime dell'ordine di alcune centinaia di migliaia.
+
+Anche i risultati del paper originale aiutano a quantificare la distanza. Per i task neuromorfici Zhou et al. utilizzano una configurazione che definiscono mini QKFormer con circa $1{,}50$ milioni di parametri, distribuita sui tre stage secondo $\{0, 1, 1\}$ blocchi e con dimensione massima di embedding pari a 256~\cite{zhou2024qkformer}. Con 16 timestep tale configurazione raggiunge $98{,}6\%$ su DVS128-Gesture e $84{,}0\%$ su CIFAR10-DVS~\cite{zhou2024qkformer}.
+
+Questa configurazione non deve essere confusa con la Mini-QKFormer sviluppata nella presente tesi, che verrà descritta nel capitolo~3. Il nome simile nasconde infatti due regimi differenti: la nostra baseline viene portata a circa $5 \times 10^5$ parametri, quindi a circa un terzo della dimensione della configurazione neuromorfica ridotta del lavoro originale. Nel regime studiato qui, elementi che in QKFormer rappresentano una frazione relativamente modesta del budget possono quindi diventare dominanti.
+
+È proprio per questo che QKFormer costituisce un riferimento utile e, allo stesso tempo, non può essere semplicemente ridotto meccanicamente.
+
+Una versione compatta deve preservare le idee che rendono QKFormer interessante:
+\begin{equation}
+\label{eq:principi_chiave_qkformer}
+\text{gerarchia}, \qquad \text{attenzione spike-driven efficiente}, \qquad \text{progressiva riduzione dei token},
+\end{equation}
+ma deve anche interrogarsi sul costo relativo di ogni componente quando larghezza e profondità vengono drasticamente ridotte.
+
+Rimane infine il punto più importante per il percorso di questa tesi: che ruolo viene assegnato al tempo?
+
+Nella formulazione di QKFormer, Q e K hanno dimensione
+\begin{equation*}
+T \times N \times D.
+\end{equation*}
+Potrebbe quindi sembrare che il meccanismo di attenzione operi congiuntamente sui timestep. Non è così.
+
+Gli autori specificano che $T$ viene mantenuto come dimensione indipendente per gli strati neuronali, mentre negli altri operatori viene sostanzialmente combinato con la dimensione di batch~\cite{zhou2024qkformer}. Questo significa che, per ciascun istante $t$, Q-K Attention riceve una rappresentazione
+\begin{equation*}
+X_t \in \mathbb{R}^{N \times D}
+\end{equation*}
+e costruisce il relativo token o channel attention vector sulla base dell'attività di quel timestep:
+\begin{equation}
+\label{eq:attenzione_istante_t}
+A_t = \mathcal{A}(Q_t).
+\end{equation}
+Non compare direttamente un termine del tipo
+\begin{equation}
+\label{eq:attenzione_cross_time_assente}
+\mathcal{A} \left( Q_t, Q_{t-1}, Q_{t-2}, \dots \right).
+\end{equation}
+La relazione tra $X_t$ e le rappresentazioni precedenti viene quindi mediata principalmente dagli stati dei neuroni LIF presenti lungo la rete.
+
+La distinzione può essere rappresentata schematicamente come
+\begin{equation}
+\label{eq:qkformer_spaziale_vs_temporale}
+\boxed{
+\begin{array}{c}
+\text{Q-K Attention} \\[2mm]
+X_t(:,1), \dots, X_t(:,N) \longleftrightarrow \text{token/channel selection}
+\end{array}
+}
+\end{equation}
+mentre
+\begin{equation}
+\label{eq:qkformer_stato_temporale}
+\boxed{
+X_{t-k} \longrightarrow X_t \quad\text{principalmente attraverso lo stato neuronale}.
+}
+\end{equation}
+
+QKFormer possiede quindi una struttura profondamente gerarchica nello spazio, ma non costruisce una corrispondente gerarchia esplicita lungo il tempo.
+
+Questa osservazione non implica che il modello ignori l'informazione temporale. Al contrario, gli esperimenti originali mostrano che il numero dei timestep influenza le prestazioni: su CIFAR100 l'accuratezza cresce dal $78{,}51\%$ con $T=1$ all'$81{,}15\%$ con $T=4$, fino all'$81{,}30\%$ con $T=6$~\cite{zhou2024qkformer}. Gli autori riconoscono inoltre tra le limitazioni del lavoro il costo associato ai timestep e indicano come direzione futura la ricerca di architetture efficienti capaci di operare con un numero inferiore di passi temporali~\cite{zhou2024qkformer}.
+
+Il punto è più sottile: QKFormer utilizza il tempo, ma l'interazione temporale non è l'oggetto principale del suo meccanismo di attenzione.
+
+Per questa tesi tale distinzione è decisiva. QKFormer offre un backbone nel quale l'elaborazione spaziale e di canale è già stata accuratamente progettata per essere gerarchica ed efficiente. Questo permette di porre una domanda più specifica di quella affrontata dal lavoro originale:
+\begin{center}
+\emph{una volta portata l'architettura in un regime fortemente compatto, la sola memoria LIF è il modo più efficace di spendere il budget destinato alla dimensione temporale?}
+\end{center}
+
+La risposta non può essere ricavata dal paper di QKFormer. Deve essere misurata.
+
+La baseline che verrà presentata nel capitolo~3 nasce quindi da una scelta conservativa: mantenere i principi fondamentali di QKFormer abbastanza fedelmente da disporre di un riferimento riconoscibile, ma ridurne drasticamente la scala. Solo dopo averne stabilito il comportamento sarà possibile decidere quali componenti debbano essere preservati, semplificati oppure sostituiti.
+
+La letteratura successiva rafforza la legittimità di questa domanda. STAtten mostra che sostituire in QKFormer l'attenzione spatial-only con un meccanismo capace di correlare feature attraverso blocchi temporali può migliorare le prestazioni sui benchmark neuromorfici~\cite{lee2025spiking}; ancora più recentemente, Multi-Delay Mixer mostra che arricchire QKFormer con informazioni provenienti da ritardi differenti migliora sia l'interazione temporale misurata sia l'accuratezza~\cite{shi2026multidelay}.
+
+Questi risultati non prescrivono ancora la soluzione da adottare. Fanno però emergere chiaramente il passaggio successivo del nostro percorso:
+\begin{equation*}
+\text{QKFormer} \quad\Rightarrow\quad 
+\begin{cases} 
+\text{forte gerarchia spaziale}, \\ 
+\text{attenzione efficiente}, \\ 
+\text{memoria temporale neuronale}, 
+\end{cases}
+\end{equation*}
+ma la domanda rimane:
+\begin{equation}
+\label{eq:domanda_temporale_compattezza}
+\boxed{\text{come arricchire la capacità temporale senza perdere la compattezza?}}
+\end{equation}
+
+È a questa domanda che risponde la sezione successiva, passando dalle architetture generali di Spiking Transformer alle strategie specificamente progettate per modellare il tempo.
+
+\begin{table}[htbp]
+\centering
+\small
+\renewcommand{\arraystretch}{1.2}
+\caption{Evoluzione delle dimensioni della rappresentazione lungo QKFormer. La gerarchia riduce progressivamente il numero dei token e aumenta la dimensionalità dei canali; nella configurazione standard il tipo di attenzione varia in funzione del regime $N/D$. Le dimensioni e la strategia di mixed attention seguono la formulazione originale di QKFormer~\cite{zhou2024qkformer}.}
+\label{tab:flusso_dimensionale_qkformer}
+\begin{tabular}{p{2cm} p{3.2cm} p{2.6cm} c p{2.8cm} p{3.2cm}}
+\hline
+\textbf{Stage} & \textbf{Output} & \textbf{Risoluzione relativa} & \textbf{Canali} & \textbf{Attenzione predefinita} & \textbf{Ruolo principale} \\
+\hline
+Stage 1 & $T \times H/4 \times W/4 \times C$ & Alta & $C$ & QKTA & Preservare dettaglio spaziale e selezionare token \\
+Stage 2 & $T \times H/8 \times W/8 \times 2C$ & Intermedia & $2C$ & QKTA & Costruire rappresentazioni gerarchiche \\
+Stage 3 & $T \times H/16 \times W/16 \times 4C$ & Bassa & $4C$ & SSA (o QKCA nelle varianti) & Modellare feature profonde con meno token \\
+\hline
+\end{tabular}
+\end{table}
+
+
+% ==============================================================================
+%  Strategie per la modellazione temporale esplicita
+% ==============================================================================
+
+
+\section{Strategie per la modellazione temporale esplicita}
+\label{sec:strategie_modellazione_temporale}
+
+L'analisi di QKFormer ha lasciato aperta una questione precisa. La rete possiede una dimensione temporale reale: i neuroni mantengono uno stato da un timestep al successivo e, di conseguenza, ciò che avviene al tempo $t-k$ può influenzare la computazione al tempo $t$. Il meccanismo di attenzione, tuttavia, opera prevalentemente sulle relazioni presenti all'interno della rappresentazione corrente. La memoria e l'attenzione svolgono quindi due funzioni diverse: la prima trasporta nel presente una sintesi del passato; la seconda organizza le relazioni tra le feature disponibili nel presente.
+
+Questa separazione è comune a numerosi Spiking Transformer. Il problema non è che tali modelli siano privi di temporalità, ma che gran parte della temporalità venga affidata implicitamente alla dinamica neuronale. Lavori recenti hanno iniziato a mettere in discussione proprio questa assunzione. STAtten osserva che le forme di attenzione spatial-only possono catturare efficacemente le relazioni tra feature dello stesso timestep senza costruire direttamente relazioni tra feature appartenenti a tempi diversi~\cite{lee2025spiking}. Multi-Delay Mixer compie un passo ulteriore: introduce una metrica specifica, il Temporal Interaction Coefficient (TIC), e mostra che diversi meccanismi di attenzione spiking presentano distribuzioni di dipendenza fortemente concentrate sul timestep corrente, con contributi storici molto più deboli~\cite{shi2026multidelay}.
+
+Questo risultato aiuta a formulare correttamente il problema. Non si tratta semplicemente di ``aggiungere più memoria''. Esistono modi profondamente differenti di aumentare la capacità temporale di una rete, e ciascuno modifica una parte diversa del processo computazionale.
+
+Si può agire sulla dinamica del neurone, modificando il modo in cui il passato viene compresso nello stato corrente. Si possono introdurre interazioni esplicite tra timestep, facendo sì che rappresentazioni appartenenti a istanti differenti vengano direttamente confrontate o combinate. Si può dotare il modello di una memoria strutturata, più ricca del singolo potenziale di membrana. Infine, è possibile intervenire ancora prima, sulla granularità temporale della rappresentazione, esponendo contemporaneamente il modello a descrizioni del segnale su scale differenti.
+
+Queste strategie non costituiscono quattro versioni dello stesso meccanismo. Rispondono a quattro domande diverse:
+\begin{equation}
+\label{eq:quattro_domande_temporali}
+\begin{aligned} 
+&\text{Quanto a lungo deve persistere l'informazione?}\\ 
+&\text{Quali istanti devono interagire direttamente?}\\ 
+&\text{In quale forma deve essere rappresentato il passato?}\\ 
+&\text{A quale risoluzione temporale deve essere osservato il fenomeno?} 
+\end{aligned}
+\end{equation}
+
+La distinzione sarà importante anche nella parte sperimentale della tesi, perché consente di evitare un errore frequente: interpretare ogni meccanismo ``temporale'' come se agisse sulla medesima proprietà.
+
+La soluzione più economica consiste nel modificare la dinamica neuronale stessa. PLIF, discusso nella sezione~2.2, ne costituisce un esempio essenziale. Rendendo apprendibile la costante temporale, il modello può modificare il proprio profilo di decadimento e quindi la durata con cui l'attività passata continua a influenzare lo stato corrente~\cite{fang2021plif}. L'intervento è particolarmente attraente in un regime compatto perché introduce pochissimi parametri aggiuntivi e non richiede, in linea di principio, di conservare esplicitamente una cronologia di feature passate.
+
+La differenza rispetto a un LIF può essere vista attraverso il kernel temporale implicito
+\begin{equation}
+\label{eq:kernel_temporale_plif}
+V_t \approx \sum_{k=0}^{\infty}\lambda^k X_{t-k}.
+\end{equation}
+Nel LIF il profilo $\lambda^k$ è determinato a priori dai parametri neuronali; nel PLIF la rete può adattare la rapidità del decadimento. Il passato rimane però compresso nella stessa somma ricorrente. Imparare $\lambda$ significa imparare quanto rapidamente dimenticare, non conservare separatamente $X_{t-1}$, $X_{t-4}$ e $X_{t-10}$.
+
+Questa distinzione emerge chiaramente anche nella letteratura che combina neuroni adattivi e attenzione temporale. STCA-SNN, per esempio, utilizza PLIF come modello neuronale ma parte esplicitamente dall'osservazione che LIF e PLIF, nonostante la loro dinamica temporale, producano collegamenti relativamente deboli quando è necessario rappresentare correlazioni globali lungo il tempo. Il metodo raccoglie quindi le feature attraverso tutti i timestep, comprime la componente spaziale e applica un meccanismo di self-attention sulle dimensioni temporale e di canale~\cite{wu2023stca}. Gli esperimenti riportati dagli autori mostrano miglioramenti rispetto alla SNN PLIF priva del modulo di attenzione su più benchmark event-based~\cite{wu2023stca}.
+
+Il punto interessante non è il valore assoluto di tali miglioramenti, ma ciò che il confronto dimostra concettualmente: rendere adattiva la memoria locale e costruire una correlazione esplicita tra tempi sono interventi complementari, non equivalenti.
+
+Da questa osservazione nasce la seconda grande famiglia di approcci: invece di chiedere allo stato neuronale di trasportare da solo l'informazione storica, si consente alle rappresentazioni di timestep differenti di interagire direttamente.
+
+STAtten costituisce uno degli esempi più chiari di questa strategia. Il metodo parte da feature spiking
+\begin{equation*}
+X \in \mathbb{R}^{T \times N \times D},
+\end{equation*}
+ma, anziché calcolare la self-attention indipendentemente per ciascun $t$, raggruppa più timestep in blocchi temporali. Se $B$ indica la dimensione del blocco, le feature comprese tra $iB$ e $(i+1)B-1$ vengono considerate congiuntamente. Dopo avere riordinato token e tempo in un unico asse, la correlazione viene calcolata su rappresentazioni che appartengono contemporaneamente a posizioni spaziali e istanti diversi:
+\begin{equation}
+\label{eq:statten_formulazione}
+\operatorname{STAtten}(X[b]) = \operatorname{LIF} \left( Q[b]K[b]^{\top}V[b]\alpha \right),
+\end{equation}
+con
+\begin{equation*}
+[b] = [iB:(i+1)B].
+\end{equation*}
+Per esempio, con $T=4$ e $B=2$, vengono processati congiuntamente i timestep $(0,1)$ e $(2,3)$. Il meccanismo non deve quindi attendere che l'informazione del primo elemento del blocco sopravviva implicitamente nello stato neuronale fino al secondo: le relative feature partecipano direttamente alla stessa operazione di attenzione.
+
+\begin{figure}[htbp]
+    \centering
+    % \includegraphics[width=0.95\textwidth]{images/placeholder_fig2_9.pdf}
+    \rule{0.9\textwidth}{4.8cm} % Box segnaposto per Fig 2.9
+    \caption{Tre modalità differenti di integrare il passato. La dinamica neuronale comprime ricorsivamente la storia nello stato corrente; l'attenzione spazio-temporale confronta direttamente feature appartenenti a più timestep; il temporal mixing mediante ritardi accede selettivamente a differenti istanti storici senza costruire una correlazione spazio-temporale completa.}
+    \label{fig:confronto_integrazione_passato}
+\end{figure}
+
+La scelta block-wise di STAtten non è casuale. Una correlazione completa tra tutti i timestep sarebbe possibile concatenando l'intera sequenza lungo la dimensione dei token, ma comporterebbe due problemi. Il primo è la quantità di memoria necessaria per conservare e correlare tutte le feature temporali. Il secondo deriva dalla natura binaria degli spike: gli autori osservano che la similarità e il numero di neuroni attivi durante le operazioni QKV tendono a diminuire aumentando la distanza temporale, rendendo poco produttivo correlare indiscriminatamente istanti molto lontani~\cite{lee2025spiking}.
+
+Il blocco $B$ assume quindi il significato di un orizzonte di interazione esplicita. All'interno di tale orizzonte l'attenzione vede contemporaneamente spazio e tempo; oltre il blocco, la relazione rimane affidata ad altri meccanismi, tra cui la dinamica neuronale.
+
+È un compromesso importante. STAtten mostra che temporal e spatial attention possono essere integrate mantenendo la stessa classe di complessità computazionale dichiarata dagli autori per l'attenzione spatial-only, $\mathcal{O}(TND^2)$, grazie alla riorganizzazione block-wise e all'assenza della softmax~\cite{lee2025spiking}. Ciò non significa però che il costo pratico sia identico sotto ogni aspetto: devono essere disponibili contemporaneamente feature appartenenti a più timestep e aumenta quindi la pressione sulla memoria. Lo stesso lavoro identifica esplicitamente la memoria temporale come uno dei motivi per evitare una correlazione globale sull'intera sequenza~\cite{lee2025spiking}.
+
+Per un modello estremamente compatto, questa considerazione è decisiva. La capacità temporale non può essere valutata esclusivamente attraverso il numero dei parametri. Un modulo quasi privo di nuovi pesi può comunque richiedere una quantità significativa di buffer.
+
+La domanda diventa allora: è necessario aprire simultaneamente più timestep all'interno dell'attenzione, oppure è possibile trasferire nel presente soltanto alcune informazioni storiche selezionate?
+
+Multi-Delay Mixer esplora precisamente la seconda possibilità.
+
+Il punto di partenza del lavoro è particolarmente vicino al problema discusso in questa tesi perché, prima di proporre il nuovo modulo, Shi et al. tentano di misurare quanto gli attuali meccanismi di self-attention dipendano dal passato~\cite{shi2026multidelay}. Il Temporal Interaction Coefficient analizza la distribuzione della rilevanza temporale e mostra che essa tende a essere fortemente concentrata attorno al timestep corrente. Gli autori interpretano questo comportamento come evidenza di una limitata diversità dei pattern temporali rappresentati dalle attention spatial-only~\cite{shi2026multidelay}.
+
+La soluzione proposta non consiste nel costruire una seconda attention lungo $T$, ma nel modificare le feature che raggiungono l'attenzione spaziale.
+
+Per ciascun canale $i$, MD-Mixer considera $K$ rami temporali con ritardi
+\begin{equation*}
+d_i^{(1)}, d_i^{(2)}, \dots, d_i^{(K)}
+\end{equation*}
+e coefficienti apprendibili
+\begin{equation*}
+\alpha_i^{(1)}, \alpha_i^{(2)}, \dots, \alpha_i^{(K)}.
+\end{equation*}
+La feature temporale arricchita viene calcolata come
+\begin{equation}
+\label{eq:md_mixer_combinazione}
+\widetilde X_{t,i} = \sum_{k=1}^{K} \alpha_i^{(k)} X_{t-d_i^{(k)},i}.
+\end{equation}
+
+Un singolo canale può quindi accedere contemporaneamente a più istanti della propria storia. Canali diversi possono inoltre imparare ritardi differenti.
+
+L'operazione modifica sostanzialmente la geometria della memoria. Nel LIF, i contributi storici vengono sovrapposti secondo un decadimento:
+\begin{equation*}
+X_t + \lambda X_{t-1} + \lambda^2 X_{t-2} + \dots.
+\end{equation*}
+Nel multi-delay mixing, il modello può costruire invece una combinazione del tipo
+\begin{equation}
+\label{eq:multi_delay_esempio}
+\alpha_1 X_{t-1} + \alpha_2 X_{t-4} + \alpha_3 X_{t-7},
+\end{equation}
+senza richiedere che $X_{t-4}$ sopravviva indirettamente attraverso quattro aggiornamenti successivi del potenziale.
+
+La differenza non è semplicemente quantitativa. Nel primo caso la distanza temporale determina implicitamente il peso attraverso il decadimento. Nel secondo è la rete a poter associare importanza distinta a ritardi differenti.
+
+MD-Mixer utilizza inoltre ritardi apprendibili, invece di fissarli manualmente. Poiché uno shift discreto nel tempo non è direttamente differenziabile rispetto all'indice del ritardo, gli autori introducono una procedura soft-to-hard con annealing della temperatura che permette di ottimizzare inizialmente una selezione continua e renderla progressivamente discreta durante il training~\cite{shi2026multidelay}.
+
+L'ablation sui delay è istruttiva. Sul CIFAR10-DVS riportato dagli autori, l'introduzione di ritardi casuali fissi produce soltanto un incremento modesto rispetto alla baseline, mentre il Multi-Delay Mixer con ritardi appresi fornisce un beneficio sensibilmente maggiore~\cite{shi2026multidelay}. Questo suggerisce che il vantaggio non derivi semplicemente dall'iniettare indiscriminatamente attività passata, ma dalla capacità di scegliere quale passato rendere disponibile.
+
+Nel framework completo gli autori utilizzano il mixer per costruire Key e Value temporalmente arricchite, lasciando invece la Query allineata al tempo corrente. In termini concettuali:
+\begin{equation*}
+Q_t \quad\text{chiede informazioni sul presente},
+\end{equation*}
+mentre
+\begin{equation*}
+\widetilde K_t, \widetilde V_t \quad\text{contengono anche informazioni selezionate dal passato}.
+\end{equation*}
+L'attenzione spaziale successiva opera quindi su feature che incorporano già una forma di temporal mixing.
+
+Questa architettura è particolarmente significativa per un sistema hardware-constrained perché separa nettamente due funzioni:
+\begin{equation}
+\label{eq:temporal_mixing_spatial_attention}
+\text{temporal mixing} \longrightarrow \text{spatial attention}.
+\end{equation}
+Non è necessario rendere l'intera attention spazio-temporale per aumentare l'accesso alla storia. Il prezzo diventa invece la necessità di mantenere un buffer sufficiente a recuperare le feature ritardate. Se il massimo ritardo è $d_{\max}$, una implementazione streaming deve disporre, almeno concettualmente, di una memoria che permetta di recuperare gli stati richiesti entro quell'orizzonte. Il costo non scompare: cambia forma, passando da una correlazione temporale globale a una memoria temporale più strutturata e selettiva.
+
+Questo principio sarà particolarmente importante nei capitoli successivi: un meccanismo temporale può essere conveniente non perché elimini lo stato storico, ma perché rende esplicito e limitato quale stato sia necessario conservare.
+
+L'accesso attraverso ritardi non è tuttavia l'unico modo di evitare che l'intera storia venga compressa in un singolo potenziale. Una terza famiglia di strategie modifica direttamente la struttura della memoria.
+
+LMUFormer fornisce un esempio interessante perché affronta il problema quasi dall'estremo opposto rispetto alla self-attention. Gli autori partono dall'esigenza di combinare le prestazioni dei Transformer con la possibilità di processare sequenze in streaming e con complessità lineare, e utilizzano le Legendre Memory Units come elemento centrale della memoria~\cite{liu2024lmuformer}.
+
+La dinamica di una LMU è descritta, in forma continua, attraverso un sistema lineare
+\begin{equation}
+\label{eq:lmu_continuo_sec25}
+\dot{\mathbf m}(t) = \mathbf A\mathbf m(t) + \mathbf B u(t),
+\end{equation}
+e, dopo discretizzazione,
+\begin{equation}
+\label{eq:lmu_discreto_sec25}
+\mathbf m_t = \overline{\mathbf A}\mathbf m_{t-1} + \overline{\mathbf B}u_t.
+\end{equation}
+Rispetto a un LIF cambia soprattutto la dimensionalità e l'organizzazione dello stato. $V_t$ rappresenta una quantità associata alla membrana di un neurone; $\mathbf m_t$ è invece un vettore progettato per conservare una descrizione strutturata della storia del segnale attraverso una base collegata ai polinomi di Legendre~\cite{liu2024lmuformer}.
+
+In termini intuitivi, invece di chiedere a una sola variabile
+\begin{equation*}
+V_t
+\end{equation*}
+di riassumere la storia con un decadimento, la memoria utilizza più coordinate
+\begin{equation*}
+m_{t,1}, m_{t,2}, \dots, m_{t,q}
+\end{equation*}
+che rappresentano componenti differenti della dinamica passata.
+
+LMUFormer costruisce attorno a questa memoria un'architettura sequenziale con patch embedding convoluzionale e channel mixer; ne propone inoltre una variante spiking nella quale la memoria LMU viene integrata con neuroni spiking~\cite{liu2024lmuformer}. Gli autori sottolineano la possibilità di elaborare l'input in streaming, senza attendere la disponibilità dell'intera sequenza, mantenendo al contempo una rappresentazione temporale più ricca rispetto alla ricorrenza convenzionale~\cite{liu2024lmuformer}.
+
+La scelta mostra bene il trade-off di questa famiglia di approcci. Una memoria vettoriale può rappresentare il passato in modo più espressivo e controllato, ma ogni dimensione dello stato deve essere aggiornata e conservata. In un dispositivo dotato di memoria on-chip limitata, la qualità della memoria deve essere valutata insieme alla sua dimensione.
+
+Ciò rende la structured memory particolarmente interessante come riferimento teorico, ma non necessariamente la scelta più naturale per un modello il cui obiettivo primario comprende una riduzione aggressiva del footprint di stato.
+
+Le tre strategie considerate finora intervengono tutte dentro il modello. Esiste però un'altra possibilità: fornire alla rete più di una descrizione temporale del segnale.
+
+La motivazione deriva direttamente dalla natura degli event stream. Se si usa una discretizzazione molto fine, ogni frame contiene pochi eventi e preserva bene le variazioni rapide, ma la struttura spaziale può risultare frammentaria. Se si usa una finestra temporale più ampia, più eventi vengono accumulati nella stessa rappresentazione e la struttura spaziale diventa più completa, al prezzo di una maggiore compressione temporale.
+
+Non esiste quindi necessariamente una singola granularità capace di preservare simultaneamente tutti gli aspetti del segnale.
+
+Tan et al. sfruttano esplicitamente questa osservazione nel lavoro che introduce DVS-Lip e la Multi-Grained Spatio-Temporal Features Perceived Network (MSTP)~\cite{tan2022dvslip}. Il modello utilizza due rami con frame rate differenti. Il ramo a bassa frequenza temporale riceve frame più densi, che preservano meglio la struttura spaziale ma aggregano una quantità maggiore di tempo; quello ad alta frequenza utilizza frame più sparsi, nei quali la struttura spaziale è meno completa ma l'evoluzione temporale è rappresentata con maggiore dettaglio~\cite{tan2022dvslip}. Un Message Flow Module permette quindi di combinare le feature apprese dai due percorsi~\cite{tan2022dvslip}.
+
+Il principio può essere espresso come
+\begin{equation}
+\label{eq:multi_granularity_principio}
+\begin{aligned} 
+\text{coarse stream}:& \quad \Delta t_c \uparrow \;\Rightarrow\; \text{spatial evidence} \uparrow, \; \text{temporal detail} \downarrow, \\ 
+\text{fine stream}:& \quad \Delta t_f \downarrow \;\Rightarrow\; \text{spatial evidence per bin} \downarrow, \; \text{temporal detail} \uparrow. 
+\end{aligned}
+\end{equation}
+Il modello cerca quindi di evitare una scelta esclusiva tra i due estremi.
+
+Questo approccio è particolarmente naturale nella lettura labiale event-based. Il riconoscimento di una parola richiede sia una configurazione sufficientemente completa della regione della bocca sia la capacità di cogliere micro-movimenti e transizioni fini tra configurazioni visivamente simili. Gli autori costruiscono DVS-Lip includendo anche coppie di parole visivamente simili proprio per mettere sotto pressione questa capacità temporale e mostrano che la fusione multi-granulare è particolarmente utile in tale regime~\cite{tan2022dvslip}.
+
+La strategia introduce però un costo evidente: due granularità elaborate da due rami significano duplicare almeno una parte dell'elaborazione. La multi-granularity risolve il compromesso informativo aumentando la capacità del sistema. Nel regime fortemente compatto di questa tesi, la domanda diventa quindi più severa: è possibile ottenere i benefici di una scala temporale fine senza replicare un intero backbone?
+
+Questa domanda non viene ancora risolta in questa sezione; costituirà una delle ipotesi considerate nella parte sperimentale.
+
+\begin{figure}[htbp]
+    \centering
+    % \includegraphics[width=0.95\textwidth]{images/placeholder_fig2_10.pdf}
+    \rule{0.9\textwidth}{4.8cm} % Box segnaposto per Fig 2.10
+    \caption{Principali famiglie di strategie per aumentare la capacità temporale di un modello spiking. Gli interventi agiscono rispettivamente sulla dinamica dello stato, sulle relazioni tra timestep, sulla struttura della memoria o sulla granularità con cui l'input viene osservato.}
+    \label{fig:quattro_modi_allocare_temporale}
+\end{figure}
+
+La tassonomia appena costruita può essere sintetizzata nella tabella~\ref{tab:strategie_temporal_modeling}.
+
+\begin{table}[htbp]
+\centering
+\small
+\renewcommand{\arraystretch}{1.2}
+\caption{Strategie di temporal modeling rilevanti per la tesi.}
+\label{tab:strategie_temporal_modeling}
+\begin{tabular}{p{2.3cm} p{1.6cm} p{2.2cm} p{2cm} p{2.6cm} p{2.8cm}}
+\hline
+\textbf{Strategia} & \textbf{Esempi} & \textbf{Che cosa modifica} & \textbf{Accesso al passato} & \textbf{Vantaggio principale} & \textbf{Costo o limite principale} \\
+\hline
+Dinamica neuronale adattiva & PLIF, PMSN & Evoluzione dello stato & Implicito e ricorrente & Costo parametrico ridotto; dinamica adattabile & Il passato rimane compresso nello stato \\
+Attenzione spazio-temporale & STCA, STAtten & Correlazione tra feature & Diretto entro una finestra/blocco & Relazioni temporali esplicite e data-dependent & Memoria per feature temporali, maggiore pressione sul buffer \\
+Temporal delay mixing & TIM, MD-Mixer & Feature fornite all'attenzione & Selettivo a ritardi specifici & Multi-scala con costo contenuto & Richiede history buffer e scelta/apprendimento dei delay \\
+Memoria strutturata & LMU / LMUFormer & Rappresentazione dello stato & Ricorrente ma vettoriale & Maggiore capacità di long-range memory & Footprint e update dello stato più complessi \\
+Multi-granularity & MSTP & Rappresentazione temporale dell'input & Più risoluzioni simultanee & Conserva informazione coarse e fine & Duplicazione parziale dell'elaborazione \\
+\hline
+\end{tabular}
+\end{table}
+
+La tabella mette in evidenza che la domanda ``quale modulo temporale usare?'' è formulata male se non viene prima specificato quale limite si vuole correggere.
+
+Se il problema è che il neurone dimentica troppo rapidamente, una dinamica adattiva può essere sufficiente. Se l'informazione esiste nei singoli timestep ma non viene messa in relazione, è più naturale introdurre temporal interaction. Se le dipendenze importanti si trovano a ritardi diversi, una struttura multi-delay può essere più efficiente di un'attenzione spazio-temporale completa. Se la compressione in un singolo stato è il limite principale, occorre una memoria più strutturata. Se, infine, le informazioni necessarie esistono a granularità incompatibili, la soluzione può essere spostata verso la rappresentazione stessa.
+
+Questa distinzione permette anche di collocare correttamente una linea di ricerca adiacente, il predictive coding. In quel paradigma la struttura temporale viene sfruttata non tanto conservando indiscriminatamente il passato, quanto costruendo una previsione del segnale e propagando soprattutto l'errore tra ciò che ci si attende e ciò che viene osservato. L'idea di fondo è che gli input sensoriali naturali contengano forti ridondanze temporali e che la componente prevedibile possa essere rimossa per ottenere codifiche più efficienti. La letteratura sul predictive coding spiking esplora diverse realizzazioni di questo principio, ma le implementazioni hardware e le applicazioni su task moderni rimangono ancora relativamente frammentarie.
+
+Per la presente tesi predictive coding costituisce quindi un riferimento concettuale e una possibile direzione futura, non il meccanismo centrale della ricerca. L'obiettivo qui è più circoscritto: capire come allocare capacità temporale all'interno di un compact Spiking Transformer mantenendo il più possibile la struttura spike-driven già disponibile.
+
+Da questa rassegna non emerge una strategia universalmente dominante. E questo è forse il risultato più utile.
+
+Una temporal attention completa offre elevata espressività ma richiede di mantenere simultaneamente più feature storiche. Una dinamica neuronale apprendibile è estremamente economica ma modifica soltanto il modo con cui la storia viene compressa. Una memoria strutturata aumenta la capacità temporale al prezzo di uno stato più ricco. Una rappresentazione multi-granulare preserva scale differenti, ma può replicare una quantità considerevole di computazione. I temporal delay occupano una posizione intermedia: espongono direttamente al modello alcune parti selezionate del passato senza costruire una correlazione completa sull'intera sequenza.
+
+Il problema diventa quindi un problema di allocazione delle risorse temporali:
+\begin{equation}
+\label{eq:allocazione_risorse_temporali}
+\boxed{\text{quanta storia conservare} \;+\; \text{in quale forma} \;+\; \text{dove renderla disponibile}}
+\end{equation}
+soggetto a un vincolo di memoria e computazione.
+
+È precisamente il punto di vista necessario per la tesi. Nei capitoli sperimentali non verrà cercato il temporal modeling più potente in senso assoluto; verrà cercato quello che utilizza meglio un budget estremamente limitato.
+
+Resta però ancora da rendere quantitativo il termine ``meglio''. Fino a questo punto sono comparsi concetti quali parametri, buffer temporali, stato persistente, operazioni sparse e firing rate, ma non è ancora stato chiarito come tali quantità si traducano nel costo di un sistema reale.
+
+È questo il compito della sezione successiva: passare dalla capacità algoritmica all'efficienza neuromorfica effettiva, e quindi comprendere quali proprietà di uno Spiking Transformer siano realmente favorevoli a una futura implementazione FPGA.
+
+
+
+% ==============================================================================
+%  Efficienza neuromorfica e vincoli hardware
+% ==============================================================================
+
+
+\section{Efficienza neuromorfica e vincoli hardware}
+\label{sec:efficienza_neuromorfica_vincoli}
+
+Le sezioni precedenti hanno trattato l'efficienza come un vincolo che accompagna la progettazione architetturale. A questo punto è necessario chiarire che cosa significhi concretamente. Un modello spiking viene spesso definito energy-efficient perché comunica attraverso spike binari e presenta attivazioni sparse; queste proprietà costituiscono effettivamente il presupposto di una computazione a basso consumo, ma non ne rappresentano una garanzia. Il vantaggio emerge soltanto quando l'algoritmo, il flusso dei dati e l'hardware sono progettati in modo tale che l'assenza di attività si traduca in lavoro realmente evitato.
+
+Questa distinzione separa l'efficienza teorica dall'efficienza di sistema.
+
+In una rete neurale convenzionale, una trasformazione lineare può essere espressa come
+\begin{equation}
+\label{eq:trasformazione_lineare_ann}
+\mathbf{y} = W\mathbf{x},
+\end{equation}
+e richiede una successione di operazioni multiply-and-accumulate (MAC). Per ciascun elemento non nullo dell'ingresso viene calcolato un prodotto tra attivazione e peso e il risultato viene accumulato:
+\begin{equation}
+\label{eq:accumulo_mac}
+a \leftarrow a + w_i x_i.
+\end{equation}
+Se invece l'attivazione presinaptica è uno spike binario
+\begin{equation*}
+s_i \in \{0, 1\},
+\end{equation*}
+il prodotto assume la forma
+\begin{equation}
+\label{eq:prodotto_spiking}
+w_i s_i = 
+\begin{cases} 
+w_i, & s_i = 1, \\ 
+0, & s_i = 0. 
+\end{cases}
+\end{equation}
+Quando $s_i = 1$, il peso deve soltanto essere accumulato; quando $s_i = 0$, idealmente non è necessario eseguire alcuna operazione. La computazione sinaptica può quindi essere ricondotta a una accumulate (AC):
+\begin{equation}
+\label{eq:accumulo_ac}
+a \leftarrow a + w_i,
+\end{equation}
+attivata esclusivamente dalla presenza dello spike.
+
+È questo il significato hardware più concreto del paradigma spike-driven. Non è semplicemente il fatto che il tensore contenga numeri pari a zero o uno: è la possibilità di trasformare la sparsità delle attivazioni in una riduzione del numero di operazioni effettivamente eseguite.
+
+Spike-driven Transformer porta questo principio direttamente all'interno dell'attenzione~\cite{yao2023spikedriven}. La comunicazione binaria tra neuroni consente di sostituire diverse moltiplicazioni associate alle attivazioni con mascheramenti e sparse additions; gli autori formulano esplicitamente l'obiettivo come una computazione in cui nessuna operazione venga attivata in assenza di un evento~\cite{yao2023spikedriven}. Nei loro esperimenti il basso firing rate di Query e Key è uno dei fattori determinanti della riduzione stimata del costo della self-attention, fino a differenze molto elevate rispetto alla vanilla attention nelle configurazioni analizzate~\cite{yao2023spikedriven}.
+
+La relazione tra sparsità e costo può essere resa più esplicita. Se uno strato richiederebbe $F_l$ operazioni dense e presenta un firing rate medio
+\begin{equation}
+\label{eq:firing_rate_strato}
+\rho_l = \frac{\text{numero di spike attivi}}{\text{numero totale di possibili attivazioni}},
+\end{equation}
+una stima comunemente adottata del numero di operazioni sinaptiche spiking è
+\begin{equation}
+\label{eq:stima_sop}
+\operatorname{SOP}_l \approx \rho_l \, T \, F_l,
+\end{equation}
+dove $T$ rappresenta il numero dei timestep.
+
+QKFormer utilizza precisamente questa impostazione nella propria analisi energetica, ponendo
+\begin{equation}
+\label{eq:qkformer_sop}
+\operatorname{SOP}_l = fr_l \, T \, \operatorname{FLOP}_l,
+\end{equation}
+con $fr_l$ firing rate dello strato~\cite{zhou2024qkformer}. Gli autori utilizzano quindi valori di riferimento pari a $4{,}6\,\mathrm{pJ}$ per una MAC a 32 bit e $0{,}9\,\mathrm{pJ}$ per una AC, basati su una tecnologia a $45\,\mathrm{nm}$, per costruire una stima teorica del consumo~\cite{zhou2024qkformer}.
+
+In forma semplificata,
+\begin{equation}
+\label{eq:energia_snn_semplificata}
+E_{\mathrm{SNN}} \approx E_{\mathrm{MAC}}N_{\mathrm{MAC}} + E_{\mathrm{AC}}N_{\mathrm{AC}},
+\end{equation}
+con
+\begin{equation*}
+N_{\mathrm{AC}} \simeq \sum_l \operatorname{SOP}_l.
+\end{equation*}
+
+Questa formulazione è utile per confrontare rapidamente configurazioni differenti, ma deve essere interpretata per ciò che è: un modello energetico algoritmico, non una misura del consumo di un sistema fisico.
+
+Non comprende necessariamente il costo di accesso alla memoria, il trasferimento dei dati, i buffer, l'interconnessione, la logica di controllo, il clock tree o l'overhead necessario per identificare gli spike attivi. Né considera automaticamente il costo del mantenimento degli stati neuronali. Due modelli con la stessa stima ottenuta dall'equazione~\eqref{eq:energia_snn_semplificata} possono quindi comportarsi in modo molto diverso una volta implementati.
+
+Questa cautela è essenziale per il lavoro sviluppato nella presente tesi. I conteggi di MAC, AC e SOP saranno utilizzati come proxy comparativi nelle fasi in cui non è ancora disponibile una sintesi hardware completa; non verranno presentati come misure fisiche di energia.
+
+La prima quantità da affiancare al costo computazionale è il firing rate. La natura binaria degli spike riduce il costo di una singola operazione, ma il vantaggio si riduce se quasi tutti i neuroni emettono spike quasi sempre.
+
+Considerando una rappresentazione binaria
+\begin{equation*}
+S \in \{0, 1\}^{T \times N},
+\end{equation*}
+il firing rate globale può essere espresso come
+\begin{equation}
+\label{eq:firing_rate_globale}
+\rho = \frac{1}{TN} \sum_{t=1}^{T} \sum_{i=1}^{N} S_{t,i}.
+\end{equation}
+Una rete con
+\begin{equation*}
+\rho = 0{,}05
+\end{equation*}
+attiva mediamente il $5\%$ dei neuroni possibili a ogni timestep; una rete con
+\begin{equation*}
+\rho = 0{,}60
+\end{equation*}
+rimane formalmente spiking, ma offre opportunità di zero-skipping molto inferiori.
+
+Ne deriva una relazione concettualmente semplice:
+\begin{equation}
+\label{eq:catena_risparmio_energetico}
+\text{spike binari} + \text{alta sparsità} + \text{hardware sparsity-aware} \longrightarrow \text{potenziale risparmio energetico}.
+\end{equation}
+Togliendo uno qualsiasi dei tre termini, il vantaggio può ridursi drasticamente.
+
+L'ultimo punto è spesso sottovalutato. Una GPU, per esempio, è estremamente efficiente nell'elaborazione parallela di tensori densi, ma la presenza di molti zeri non implica automaticamente che i corrispondenti thread, accessi o moltiplicazioni vengano eliminati. La survey di Karamimanesh et al. sottolinea proprio questo limite: grandi regioni inattive dei tensori spiking non vengono sfruttate naturalmente dall'architettura GPU e il paradigma von Neumann introduce inoltre un costo considerevole nel trasferimento ripetuto dei dati tra memoria e unità di calcolo~\cite{karamimanesh2025fpga}.
+
+Questo spiega anche perché misurare semplicemente il tempo di inferenza di una SNN in PyTorch su GPU possa produrre conclusioni fuorvianti sulla sua efficienza neuromorfica. Una SNN può essere algoritmicamente sparsa e contemporaneamente essere eseguita da un backend che tratta gran parte della computazione come densa.
+
+L'hardware dedicato cerca invece di rendere la sparsità visibile al datapath.
+
+Un esempio particolarmente diretto è l'acceleratore sparse per Spike-driven Transformer proposto da Li et al.~\cite{li2024sparseacc}. Gli autori non memorizzano soltanto matrici binarie dense, ma codificano la posizione degli spike validi~\cite{li2024sparseacc}. Le computazioni successive operano quindi sugli indirizzi degli elementi attivi e ignorano i valori nulli~\cite{li2024sparseacc}. La stessa rappresentazione viene sfruttata per operatori differenti --- linear layer, max-pooling e SDSA --- utilizzando principalmente addizioni e confronti anziché moltiplicazioni~\cite{li2024sparseacc}.
+
+L'idea può essere schematizzata confrontando due strategie.
+
+Nel caso denso:
+\begin{equation*}
+[0, 0, 1, 0, 0, 1, 0, 0]
+\end{equation*}
+viene elaborato come un vettore di otto elementi.
+
+In una rappresentazione sparse-address, lo stesso segnale può essere descritto attraverso
+\begin{equation*}
+[2, 5],
+\end{equation*}
+ossia le sole posizioni degli spike attivi.
+
+Il vantaggio cresce quando la rappresentazione è molto sparsa; diminuisce progressivamente quando gli spike diventano frequenti, perché il costo della codifica, degli indirizzi e della logica di controllo diventa comparabile a quello del calcolo evitato.
+
+È esattamente il compromesso evidenziato dalla survey FPGA: sfruttare la sparsità è conveniente soltanto quando l'overhead dei circuiti necessari --- gating, multiplexer, codifica sparse, FIFO e controllo --- rimane inferiore al costo delle operazioni e degli accessi di memoria eliminati~\cite{karamimanesh2025fpga}.
+
+Questo principio impedisce di trattare la sparsità come una metrica da massimizzare isolatamente. Una rete con firing rate inferiore può richiedere una struttura di controllo più complessa; una rappresentazione estremamente irregolare può ridurre l'utilizzazione delle unità parallele; una codifica degli indirizzi può consumare memoria che una rappresentazione densa non richiederebbe. Il valore della sparsità dipende quindi dalla granularità alla quale l'hardware riesce a sfruttarla.
+
+\begin{figure}[htbp]
+    \centering
+    % \includegraphics[width=0.95\textwidth]{images/placeholder_fig2_11.pdf}
+    \rule{0.9\textwidth}{4.8cm} % Box segnaposto per Fig 2.11
+    \caption{La sparsità delle attivazioni produce un beneficio hardware soltanto quando l'architettura evita realmente le operazioni associate agli elementi nulli. Il vantaggio netto dipende dal rapporto tra computazione risparmiata e overhead introdotto dalla gestione della rappresentazione sparsa.}
+    \label{fig:sparsita_vs_overhead}
+\end{figure}
+
+Accanto alle attivazioni occorre considerare una seconda forma di memoria che nelle ANN feed-forward non compare nella stessa misura: lo stato temporale.
+
+Per ciascun neurone LIF deve essere conservato almeno un potenziale di membrana. Indicando con $N_l$ il numero di unità dello strato $l$ e con $b_l$ la precisione utilizzata per ogni stato, il footprint minimo dei potenziali può essere approssimato come
+\begin{equation}
+\label{eq:footprint_potenziali}
+M_{\mathrm{state}} = \sum_l N_l b_l.
+\end{equation}
+
+Il punto cruciale è che tale memoria non viene utilizzata una sola volta. Lo stato deve persistere da un timestep al successivo:
+\begin{equation*}
+V_t^{(l)} \longrightarrow V_{t+1}^{(l)}.
+\end{equation*}
+Durante l'inferenza streaming esso deve quindi risiedere in memoria accessibile con sufficiente banda e deve essere letto, aggiornato e riscritto ripetutamente.
+
+L'aggiunta di capacità temporale esplicita può aumentare ulteriormente questo costo. Un temporal mixer che necessita degli ultimi $d_{\max}$ timestep richiede una history buffer. Per una feature di $N$ elementi con precisione $b$,
+\begin{equation}
+\label{eq:history_buffer_dim}
+M_{\mathrm{history}} \propto d_{\max}Nb.
+\end{equation}
+Una temporal attention che processa simultaneamente $B$ timestep richiede invece di rendere disponibili contemporaneamente più feature. È questa una delle ragioni per cui STAtten adotta un'elaborazione block-wise anziché correlare indiscriminatamente l'intera sequenza: la strategia riduce l'overhead di memoria rispetto a una full temporal attention~\cite{lee2025spiking}.
+
+Queste considerazioni rendono evidente perché, nel contesto della presente tesi, state elements e temporal buffer siano metriche di prima classe. Un modulo temporale con pochi parametri può essere poco conveniente se richiede di mantenere una quantità molto elevata di feature storiche.
+
+Il numero dei parametri risponde infatti principalmente alla domanda
+\begin{center}
+\emph{quanto spazio richiedono i pesi?}
+\end{center}
+Lo stato risponde invece a
+\begin{center}
+\emph{quanto contesto deve rimanere vivo mentre il modello opera?}
+\end{center}
+e le due quantità non sono intercambiabili.
+
+Un modello con 400 mila parametri ma milioni di stati persistenti può essere più difficile da collocare interamente on-chip di un modello con più pesi ma uno stato dinamico molto più contenuto.
+
+Da questo punto di vista una FPGA costituisce un target particolarmente interessante.
+
+Una Field-Programmable Gate Array mette a disposizione risorse logiche e di memoria riconfigurabili che possono essere organizzate intorno al flusso computazionale dell'applicazione. A differenza di una CPU general-purpose, non impone che ogni operazione venga eseguita attraverso una pipeline di istruzioni fissa; rispetto a una GPU, permette di costruire datapath specializzati per precisioni numeriche, accessi alla memoria e operatori irregolari.
+
+Tra le risorse più rilevanti rientrano:
+\begin{equation}
+\label{eq:risorse_fpga_elenco}
+\text{LUT}, \qquad \text{FF}, \qquad \text{BRAM}, \qquad \text{DSP}.
+\end{equation}
+
+Le Look-Up Tables realizzano gran parte della logica combinatoria; i Flip-Flop conservano stato e registri; le Block RAM forniscono memoria on-chip; i blocchi DSP implementano in modo efficiente operazioni aritmetiche, in particolare moltiplicazioni e accumuli.
+
+La proporzione tra queste risorse dipende fortemente dalla natura del modello. Un'architettura dominata da moltiplicazioni può esercitare una forte pressione sui DSP; un modello a bassa precisione e ricco di mascheramenti può spostare il costo verso LUT e routing; una SNN con grandi feature map può essere limitata soprattutto dalla BRAM necessaria ai potenziali di membrana e ai buffer.
+
+Per questa ragione la frase ``il modello ha meno FLOPs'' non è ancora una descrizione hardware.
+
+La survey FPGA mostra una notevole eterogeneità nelle implementazioni SNN proprio perché modelli neuronali, precisione numerica, strategie di parallelizzazione e organizzazione della memoria utilizzano combinazioni molto differenti di LUT, FF e DSP~\cite{karamimanesh2025fpga}. Gli autori sottolineano inoltre che la valutazione di un'implementazione deve includere non soltanto accuratezza e approssimazione della dinamica neuronale, ma anche risorse, frequenza operativa e tempo di esecuzione~\cite{karamimanesh2025fpga}.
+
+\begin{figure}[htbp]
+    \centering
+    % \includegraphics[width=0.95\textwidth]{images/placeholder_fig2_12.pdf}
+    \rule{0.9\textwidth}{5.2cm} % Box segnaposto per Fig 2.12
+    \caption{Possibile decomposizione funzionale di uno Spiking Transformer su FPGA. Oltre alle unità di calcolo, il costo hardware comprende memoria dei pesi, stato neuronale persistente, buffer temporali, routing degli spike e logica necessaria a sfruttarne la sparsità.}
+    \label{fig:fpga_functional_decomposition}
+\end{figure}
+
+La specializzazione del datapath può produrre benefici considerevoli. Du et al. implementano un acceleratore dedicato per Spike Transformer su Xilinx Zynq UltraScale+ ZCU102 utilizzando unità specifiche per sparse additions, LIF e linear operations~\cite{du2024spike}. Nella loro realizzazione il design evita completamente i DSP e utilizza principalmente LUT, FF e BRAM; gli autori riportano $90\,552$ LUT, $62\,216$ FF e 158 BRAM, con una potenza complessiva di circa $1{,}2\,\mathrm{W}$~\cite{du2024spike}. Nelle condizioni considerate il sistema raggiunge $986{,}3\,\mathrm{GOP/s}$ e $758{,}6\,\mathrm{GOP/J}$, valori superiori ai confronti FPGA riportati nello stesso lavoro~\cite{du2024spike}.
+
+Il valore più interessante di questo risultato, ai fini della tesi, non è il numero assoluto --- dipendente dal modello, dalla piattaforma e dalla definizione di operazione --- ma la dimostrazione che una struttura spike-driven può condurre a un datapath radicalmente differente da quello di un Transformer convenzionale. L'assenza di moltiplicazioni nelle operazioni spike-based sposta la realizzazione dall'uso massiccio di DSP verso logica specializzata per accumulo e controllo.
+
+Allo stesso tempo, questi risultati suggeriscono una cautela metodologica: throughput, power ed energy efficiency possono essere confrontati correttamente soltanto tenendo conto di piattaforma, precisione, frequenza, modello e workload. Un valore espresso in GOP/J non rappresenta una proprietà intrinseca dell'architettura neurale.
+
+La stessa lezione emerge in modo ancora più netto in Xpikeformer, che affronta il problema da una prospettiva di co-design ibrido analogico-digitale. Le trasformazioni feed-forward vengono mappate su crossbar NVM per eseguire matrix-vector multiplication in-memory, mentre l'attenzione spiking utilizza un motore digitale specializzato. Il lavoro mostra però che, una volta ottimizzato il core aritmetico, il costo può spostarsi verso ciò che lo circonda: nella loro stima la maggior parte dell'energia del motore analogico viene assorbita dai circuiti periferici, e oltre il $90\%$ della latenza complessiva è attribuito a movimento dei dati, routing e controllo piuttosto che alla computazione core.
+
+Questo risultato rende particolarmente concreta una regola generale del co-design:
+\begin{equation}
+\label{eq:regola_codesign_operatore_vs_sistema}
+\boxed{\text{ottimizzare l'operatore} \neq \text{ottimizzare il sistema}.}
+\end{equation}
+
+Una matrice moltiplicata quasi gratuitamente non rende gratuita la necessità di portare gli operandi al posto giusto. Una memoria temporale molto espressiva non è necessariamente economica se richiede continui trasferimenti. Una attenzione sparse non è necessariamente vantaggiosa se la logica necessaria a gestire gli indici domina il datapath.
+
+Per questo motivo le trasformazioni architetturali studiate in questa tesi verranno valutate anche in termini di data movement potenziale. Non è possibile ricavare da un profiler software il costo esatto di routing o BRAM access di una futura implementazione, ma quantità come dimensione delle feature, numero degli stati e profondità dei buffer costituiscono indicatori molto più informativi del solo parameter count.
+
+La precisione numerica aggiunge un'ulteriore dimensione al problema.
+
+Nella fase di sviluppo le reti vengono generalmente addestrate utilizzando floating point. Un FPGA, tuttavia, può sfruttare in modo molto più efficace rappresentazioni a precisione ridotta. Quantizzare un peso da 32 a $b$ bit riduce idealmente il suo footprint da
+\begin{equation*}
+32P
+\end{equation*}
+a
+\begin{equation*}
+bP
+\end{equation*}
+bit, con un fattore di compressione
+\begin{equation}
+\label{eq:fattore_compressione_quant}
+C = \frac{32}{b}.
+\end{equation}
+Con pesi a 4 bit, per esempio, il guadagno teorico di storage rispetto a FP32 è $8\times$. Una minore precisione permette inoltre di aumentare la densità delle operazioni aritmetiche e ridurre la banda necessaria agli accessi in memoria.
+
+Nel caso delle SNN esiste però una peculiare asimmetria: le attivazioni possono essere già binarie, mentre pesi e membrane rimangono normalmente multibit. La quantizzazione non riguarda quindi soltanto un generico ``modello a bassa precisione'', ma componenti con distribuzioni e funzioni profondamente differenti.
+
+Quantized Spike-Driven Transformer affronta esplicitamente questo problema. Qiu et al. quantizzano i pesi sinaptici da FP32 a 2, 3 o 4 bit e mostrano che una quantizzazione diretta può degradare significativamente la rappresentazione costruita dalla self-attention spiking~\cite{qiu2025quantized}. Gli autori definiscono il fenomeno Spiking Information Distortion e introducono una strategia specifica per recuperare le prestazioni~\cite{qiu2025quantized}.
+
+Il risultato è importante perché impedisce un'altra semplificazione:
+\begin{equation*}
+\text{bit-width} \downarrow \quad\not\Rightarrow\quad \text{costo} \downarrow \text{ senza conseguenze}.
+\end{equation*}
+La quantizzazione modifica il comportamento del modello e deve quindi essere trattata come una fase di co-design, non come una conversione puramente meccanica del checkpoint.
+
+Lo stesso lavoro mostra anche un'interessante relazione tra precisione e numero dei timestep. Nelle ablazioni riportate, aumentare la precisione delle attività durante il training produce benefici superiori rispetto all'aumento del numero dei timestep in alcune configurazioni, mentre l'estensione temporale comporta un costo maggiore di memoria ed energia~\cite{qiu2025quantized}. Non si tratta di una regola universale, ma di un esempio efficace di come tempo, precisione e capacità informativa possano sostituirsi solo parzialmente.
+
+In una SNN temporalmente complessa il costo totale può essere letto, in prima approssimazione, come funzione di più variabili:
+\begin{equation}
+\label{eq:costo_hw_funzione_completa}
+C_{\mathrm{HW}} = f \left( P, b_w, b_s, S_{\mathrm{state}}, T, \rho, N_{\mathrm{MAC}}, N_{\mathrm{AC}}, M_{\mathrm{buffer}}, D_{\mathrm{move}} \right),
+\end{equation}
+dove $b_w$ e $b_s$ indicano rispettivamente le precisioni di pesi e stati e $D_{\mathrm{move}}$ rappresenta il volume di data movement richiesto.
+
+L'equazione non pretende di essere un modello fisico completo. Serve a mostrare perché nessuna singola metrica possa rappresentare da sola l'efficienza di un'architettura.
+
+Questo punto assume un significato particolare per QKFormer. L'attenzione Q-K riduce drasticamente la memoria associata alla matrice di attenzione, ma la gerarchia richiede più stage di patch embedding e residual connection~\cite{zhou2024qkformer}. Analisi successive, come MaxFormer, mostrano che proprio i patch embedding possono costituire una parte dominante dell'energia stimata nelle architetture gerarchiche. Nella loro analisi su ImageNet, gli autori evidenziano inoltre differenze sostanziali tra pre-spike e membrane shortcut, sia nel numero di SOP sia nel costo di memoria e comunicazione.
+
+Il risultato è direttamente rilevante per l'impostazione della presente tesi. Ottimizzare soltanto il meccanismo di attenzione rischierebbe di intervenire su una componente che, in un regime molto compatto, non rappresenta necessariamente il principale costo del modello. Se il front-end spaziale conserva feature ad alta risoluzione per molti canali e molti timestep, può dominare sia il numero delle operazioni sia la quantità di stato.
+
+Da qui deriva una regola progettuale fondamentale:
+\begin{equation}
+\label{eq:regola_dove_spendere_capacita}
+\boxed{\text{la capacità deve essere valutata dove viene spesa, non soltanto quanto è grande}.}
+\end{equation}
+
+Questa considerazione lega direttamente la prospettiva hardware alla ricerca architetturale. Ridurre il numero dei canali nelle prime feature map può liberare meno parametri di quanti ne libererebbe una modifica profonda del classificatore, ma può ridurre molto più significativamente il numero degli stati di membrana e le operazioni ripetute a ogni timestep. Allo stesso modo, aggiungere un piccolo temporal mixer negli stage profondi può aumentare marginalmente i parametri ma richiedere un history buffer molto piccolo, risultando più conveniente di una temporal attention applicata sulle feature ad alta risoluzione.
+
+È questo il significato concreto di hardware-aware capacity allocation.
+
+La FPGA scelta come target futuro rende particolarmente rilevanti quattro domande:
+\begin{equation}
+\label{eq:quattro_domande_fpga}
+\begin{aligned}
+&\text{I pesi possono risiedere prevalentemente on-chip?} \\
+&\text{Gli stati neuronali e temporali entrano nella BRAM disponibile?} \\
+&\text{Le operazioni possono essere parallelizzate senza saturare LUT/DSP?} \\
+&\text{La sparsità è sufficiente a giustificare il relativo controllo?}
+\end{aligned}
+\end{equation}
+
+Se la risposta alla prima o alla seconda domanda è negativa, il sistema deve ricorrere più frequentemente alla memoria esterna, con un costo di latenza ed energia che può superare quello dell'aritmetica. Se la terza fallisce, il throughput viene limitato dalle risorse computazionali. Se la quarta è negativa, una implementazione sparse può essere meno conveniente di un datapath regolare.
+
+Per questo motivo il percorso sperimentale della tesi utilizzerà due livelli di valutazione.
+
+Durante la ricerca architetturale verranno raccolte metriche hardware-oriented indipendenti dalla piattaforma finale: numero di parametri, state elements, firing rate, operazioni potenziali, stima delle SOP e quantità di temporal buffering.
+
+Dopo il congelamento dell'architettura, tali proxy verranno sostituiti o integrati da metriche di sintesi reale: LUT, FF, BRAM, DSP, frequenza di clock, latenza, throughput, potenza ed energia per inferenza.
+
+La distinzione è importante e verrà mantenuta esplicita nel testo:
+\begin{equation}
+\label{eq:proxy_vs_measured}
+\text{energy proxy} \neq \text{measured hardware energy}.
+\end{equation}
+
+Un modello energetico può orientare correttamente il progetto, ma soltanto la realizzazione hardware permette di osservare costi come routing, memory traffic e control overhead nella loro forma effettiva.
+
+\begin{table}[htbp]
+\centering
+\small
+\renewcommand{\arraystretch}{1.2}
+\caption{Metriche utilizzabili ai differenti livelli di valutazione.}
+\label{tab:metriche_valutazione_hardware}
+\begin{tabular}{p{2.4cm} p{2.8cm} p{4.6cm} p{4.6cm}}
+\hline
+\textbf{Livello} & \textbf{Metrica} & \textbf{Che cosa misura} & \textbf{Perché è rilevante} \\
+\hline
+Architettura & Parametri $P$ & Dimensione dei pesi & Storage e bandwidth \\
+Dinamica & State elements & Quantità di stato persistente & Footprint delle membrane \\
+Temporale & History buffer & Feature storiche da conservare & BRAM e data movement \\
+Attività & Firing rate $\rho$ & Densità degli spike & Opportunità di sparse execution \\
+Computazione & MAC & Operazioni dense/multibit & Pressione su DSP/arithmetic units \\
+Computazione & AC / SOP & Accumuli spike-triggered & Costo event-driven potenziale \\
+Precisione & bit-width & Rappresentazione di pesi e stati & Memoria, bandwidth, datapath \\
+Sintesi FPGA & LUT / FF & Logica e registri & Capacità implementativa \\
+Sintesi FPGA & BRAM & Memoria on-chip & Pesi, membrane, buffer \\
+Sintesi FPGA & DSP & Moltiplicatori/accumulatori dedicati & Costo delle parti non spike-driven \\
+Runtime & Latency / throughput & Tempo e rate di elaborazione & Requisiti real-time \\
+Energia & Power / energy per sample & Costo fisico dell'inferenza & Efficienza applicativa \\
+\hline
+\end{tabular}
+\end{table}
+
+La tabella rende anche evidente perché il numero dei parametri, pur importante, rappresenti una visione incompleta del problema. Per un sistema temporale, la memoria viva durante l'inferenza può essere altrettanto importante della memoria dei pesi.
+
+Il quadro complessivo può essere infine sintetizzato attraverso una catena di dipendenze:
+\begin{equation}
+\label{eq:catena_dipendenze_hardware}
+\text{architettura} \longrightarrow \text{pattern di spike} \longrightarrow \text{operazioni e stato} \longrightarrow \text{mapping hardware} \longrightarrow \text{energia e latenza}.
+\end{equation}
+
+Non è possibile saltare direttamente dal primo all'ultimo termine.
+
+È per questa ragione che il co-design hardware non costituisce un'aggiunta estranea alla ricerca sul temporal modeling. Ogni scelta temporale modifica anche il sistema: una costante di membrana adattiva introduce un costo quasi nullo di storage aggiuntivo; un multi-delay mixer richiede history buffer; una temporal attention necessita di più feature contemporaneamente; una struttura multi-granulare può duplicare parti del backbone. Due strategie che offrono lo stesso guadagno predittivo possono quindi avere conseguenze hardware radicalmente differenti.
+
+Nel regime compatto studiato in questa tesi, questo confronto rappresenta parte della domanda scientifica e non soltanto una successiva attività di ingegnerizzazione.
+
+L'obiettivo finale non è infatti costruire il modello con il minor numero possibile di operazioni, così come non è costruire il modello con la massima accuratezza indipendentemente dal costo. È cercare una soluzione nella quale l'informazione temporale aggiuntiva valga le risorse necessarie a rappresentarla.
+
+Con questa osservazione si chiude il percorso teorico costruito nel capitolo: dal segnale prodotto dalla event camera, alla sua discretizzazione, alla memoria neuronale, all'attenzione spiking, alla modellazione temporale esplicita e infine alle conseguenze hardware delle diverse scelte.
+
+Resta ora un ultimo passaggio. Occorre trasformare quanto emerso dalla letteratura in un insieme compatto di principi progettuali che possa guidare, senza ambiguità, gli esperimenti dei capitoli successivi.

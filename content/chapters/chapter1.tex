@@ -1,0 +1,639 @@
+\chapter{Modellazione temporale nei Compact Spiking Transformer}
+
+
+% ==============================================================================
+%  Contesto e motivazioni
+% ==============================================================================
+
+
+\section{Contesto e motivazioni}
+\label{sec:contesto_motivazioni}
+
+La percezione visiva di una scena dinamica richiede di rappresentare due aspetti strettamente connessi: la configurazione spaziale di ciò che viene osservato e la sua evoluzione nel tempo. In numerose applicazioni il secondo aspetto non costituisce un'informazione accessoria. La direzione di un movimento, la velocità con cui esso viene eseguito, la successione di configurazioni intermedie o la presenza di brevi variazioni locali possono essere determinanti per distinguere fenomeni che, osservati in forma statica, risultano simili. In questi casi il problema percettivo non consiste soltanto nel riconoscere che cosa sia presente nella scena, ma nel ricostruire come la scena sia cambiata.
+
+Le telecamere convenzionali affrontano questo problema attraverso una successione di fotogrammi. Il sensore acquisisce a intervalli regolari l'intero campo visivo e produce una sequenza di immagini bidimensionali. Se la frequenza di acquisizione è $f$, una nuova osservazione viene generata ogni $1/f$ secondi, indipendentemente da quanto la scena sia effettivamente cambiata durante tale intervallo. Si tratta di una soluzione estremamente efficace e alla base della quasi totalità della visione artificiale moderna, ma comporta una precisa scelta sul modo in cui il tempo viene rappresentato: è il sistema di acquisizione a stabilire quando osservare la scena.
+
+Questa scelta produce due conseguenze opposte. Nelle regioni statiche, fotogrammi consecutivi possono contenere grandi quantità di informazione sostanzialmente invariata. Un oggetto fermo viene acquisito nuovamente a ogni frame anche se nessuna nuova informazione visiva è comparsa. Al contrario, quando un fenomeno evolve rapidamente rispetto alla frequenza di acquisizione, ciò che accade tra due fotogrammi può essere solo parzialmente osservato. Aumentare il frame rate riduce il secondo problema, ma accresce proporzionalmente la quantità di dati acquisiti e trasferiti anche nelle regioni che non presentano alcun cambiamento.
+
+La visione neuromorfica nasce da una concezione differente dell'acquisizione. Le event camera non campionano l'intera scena secondo un orologio globale, ma rilevano in modo asincrono variazioni locali dell'intensità luminosa. Ogni pixel opera, in prima approssimazione, come un elemento sensibile indipendente: quando la variazione della luminosità osservata supera una determinata soglia, viene generato un evento. L'uscita non è pertanto costituita da immagini complete prodotte a intervalli prefissati, bensì da un flusso di eventi distribuiti irregolarmente nello spazio e nel tempo~\cite{gallego2022event}. Questa modalità di acquisizione è associata a elevata risoluzione temporale, bassa latenza, ampio intervallo dinamico e alla possibilità di evitare la continua ritrasmissione delle regioni che rimangono invariate~\cite{gallego2022event}.
+
+Nel modello ideale più comune, un evento può essere rappresentato dalla quadrupla
+\begin{equation}
+\label{eq:evento_quadrupla}
+e_i = (x_i, y_i, t_i, p_i),
+\end{equation}
+dove $x_i$ e $y_i$ individuano il pixel che ha generato l'evento, $t_i$ indica l'istante nel quale esso è stato prodotto e $p_i \in \{-1, +1\}$ ne rappresenta la polarità. Quest'ultima distingue, in termini semplificati, un incremento da una diminuzione della luminosità.
+
+Indicando con
+\begin{equation}
+L(x, y, t) = \log I(x, y, t)
+\end{equation}
+la luminosità logaritmica misurata dal pixel, il meccanismo di generazione può essere descritto idealmente attraverso la condizione
+\begin{equation}
+\label{eq:soglia_contrasto}
+L(x_i, y_i, t_i) - L(x_i, y_i, t_i^-) \simeq p_i C,
+\end{equation}
+dove $C$ rappresenta la soglia di contrasto e $t_i^-$ indica il precedente istante di riferimento per lo stesso pixel. Il modello reale di un sensore è più complesso e risente, tra gli altri fattori, della variabilità delle soglie, del rumore e delle caratteristiche del circuito fotosensibile; l'equazione~\eqref{eq:soglia_contrasto} è tuttavia sufficiente per mettere in evidenza la differenza concettuale fondamentale rispetto all'acquisizione a fotogrammi: un dato viene prodotto perché è avvenuto un cambiamento, non semplicemente perché è trascorso un intervallo prefissato~\cite{gallego2022event}.
+
+Ne deriva un oggetto informativo molto diverso da un video convenzionale. Una registrazione event-based può essere rappresentata come la sequenza temporalmente ordinata
+\begin{equation}
+\label{eq:stream_ordinato}
+\mathcal{E} = \{e_1, e_2, \dots, e_N\}, \qquad t_1 \leq t_2 \leq \dots \leq t_N.
+\end{equation}
+L'ordinamento espresso nell'equazione~\eqref{eq:stream_ordinato} merita particolare attenzione. Il timestamp non serve soltanto a stabilire in quale ordine archiviare i dati dopo che sono stati acquisiti. Può contribuire direttamente a descrivere il fenomeno osservato.
+
+Si consideri un esempio elementare. Due movimenti attraversano tre regioni spaziali, indicate rispettivamente con $A$, $B$ e $C$. Il primo movimento segue la successione
+\begin{equation*}
+A \longrightarrow B \longrightarrow C,
+\end{equation*}
+mentre il secondo segue
+\begin{equation*}
+C \longrightarrow B \longrightarrow A.
+\end{equation*}
+Se ci si limitasse a sommare nel tempo tutta l'attività osservata, entrambe le sequenze potrebbero produrre la medesima informazione spaziale: sono state coinvolte le regioni $A$, $B$ e $C$. L'insieme delle posizioni visitate sarebbe lo stesso. Eppure i due fenomeni sarebbero evidentemente differenti, perché è differente la direzione con cui il movimento si è sviluppato.
+
+Nemmeno conoscere il solo ordine è sempre sufficiente. Si considerino ora due sequenze con la stessa progressione spaziale, $A \rightarrow B \rightarrow C$, ma caratterizzate da intervalli temporali differenti:
+\begin{equation*}
+A \xrightarrow{10\,\mathrm{ms}} B \xrightarrow{10\,\mathrm{ms}} C,
+\end{equation*}
+e
+\begin{equation*}
+A \xrightarrow{100\,\mathrm{ms}} B \xrightarrow{100\,\mathrm{ms}} C.
+\end{equation*}
+Le posizioni coinvolte e il loro ordine sono identici, ma i due segnali descrivono dinamiche diverse. Nel primo caso la variazione è rapida, nel secondo si sviluppa su una scala temporale dieci volte maggiore. A seconda del compito, questa differenza può rappresentare informazione discriminativa.
+
+È in questo senso preciso che il tempo è parte della misura. Le coordinate $(x, y)$ descrivono dove è avvenuto un cambiamento, la polarità ne caratterizza il segno, mentre $t$ stabilisce la relazione temporale tra quell'evento e gli altri eventi osservati. Rimuovere o alterare tale relazione non equivale necessariamente a riorganizzare una rappresentazione senza modificarne il significato: può significare modificare il fenomeno rappresentato.
+
+\begin{figure}[htbp]
+    \centering
+    % \includegraphics[width=0.95\textwidth]{images/placeholder_fig1_1.pdf}
+    \rule{0.9\textwidth}{5cm} % Box segnaposto in attesa del diagramma definitivo
+    \caption{Differenza concettuale tra acquisizione frame-based ed event-based. Una telecamera convenzionale campiona l'intera scena a intervalli prefissati; una telecamera a eventi produce invece osservazioni asincrone in corrispondenza di variazioni locali della luminosità. Il timestamp costituisce quindi una componente della descrizione dell'evento e non soltanto un indice di ordinamento.}
+    \label{fig:frame_vs_event_sampling}
+\end{figure}
+
+Questa modalità di acquisizione evita parte della ridondanza caratteristica delle sequenze di immagini, ma introduce una rappresentazione meno regolare. Il numero di eventi generati in un intervallo non è costante: una parte quasi immobile della scena può produrre pochi eventi, mentre un movimento rapido, un bordo in transizione o una variazione improvvisa possono generare in pochi millisecondi un'intensa attività. Il segnale è quindi sparso, perché ampie regioni spazio-temporali possono essere inattive, ma anche \emph{bursty}, perché l'attività può concentrarsi in brevi intervalli.
+
+Ne segue che un event stream non possiede naturalmente la struttura rettangolare sulla quale sono state costruite gran parte delle reti neurali profonde. Un'immagine RGB può essere memorizzata come un tensore di dimensione $3 \times H \times W$; un video di $T$ fotogrammi produce naturalmente un tensore di dimensione $T \times 3 \times H \times W$. Un flusso di $N$ eventi possiede invece una lunghezza $N$ che dipende direttamente dall'attività osservata e timestamp non uniformemente distanziati.
+
+Questo aspetto diventa particolarmente rilevante durante l'addestramento su GPU. Le GPU raggiungono la massima efficienza quando eseguono la stessa operazione in parallelo su grandi strutture dense e regolari. Per questo motivo, sebbene il sensore produca dati asincroni, molti sistemi di apprendimento organizzano gli eventi in una successione di rappresentazioni tensoriali più regolari.
+
+Una delle strategie più immediate consiste nel dividere l'intervallo osservato in finestre temporali. Considerando una durata $\Delta t$, il $k$-esimo intervallo raccoglie gli eventi appartenenti all'insieme
+\begin{equation}
+\label{eq:binning_temporale}
+\mathcal{E}_k = \left\{ e_i \in \mathcal{E} \;\middle|\; t_0 + k\Delta t \leq t_i < t_0 + (k+1)\Delta t \right\}.
+\end{equation}
+Gli eventi di $\mathcal{E}_k$ possono poi essere accumulati in una rappresentazione spaziale, per esempio mantenendo separate le due polarità. La sequenza asincrona originaria viene così trasformata in una successione
+\begin{equation}
+X_1, X_2, \dots, X_T,
+\end{equation}
+che può essere elaborata più facilmente da una rete neurale.
+
+Il passaggio è più importante di quanto possa apparire. Si supponga, per esempio, di utilizzare finestre di $50\,\mathrm{ms}$. Due eventi verificatisi rispettivamente al millisecondo 3 e al millisecondo 47 della stessa finestra possono essere collocati nella medesima rappresentazione $X_k$. Il modello continua a sapere che entrambi appartengono a quell'intervallo, ma, se la rappresentazione utilizzata è una semplice aggregazione, non conserva necessariamente la loro distanza temporale originaria. Scegliere una finestra di $5\,\mathrm{ms}$ permetterebbe di separare molti più eventi temporalmente vicini, ma produrrebbe una sequenza dieci volte più lunga per la stessa durata complessiva.
+
+Si presenta così un compromesso che accompagna gran parte dell'elaborazione neuromorfica. Una discretizzazione temporale grossolana riduce il numero di passi che il modello deve elaborare, ma può fondere variazioni che nel segnale originale erano distinte. Una discretizzazione più fine conserva una parte maggiore della struttura temporale, ma aumenta il numero di stati intermedi e il numero di aggiornamenti richiesti dalla rete. Il problema non si riduce quindi alla regola ``più timestep sono sempre migliori'': una maggiore risoluzione temporale ha valore soltanto se il modello è capace di sfruttare l'informazione aggiuntiva e se il costo necessario per conservarla rimane compatibile con l'applicazione.
+
+Esistono rappresentazioni più sofisticate delle semplici mappe di conteggio --- voxel grid, time surface e altre codifiche che cercano di preservare differenti aspetti dell'informazione temporale --- e la loro trattazione verrà ripresa nel capitolo dedicato al background. Ciò che interessa qui è il principio generale: la modalità con cui un flusso asincrono viene reso accessibile alla rete determina quale parte della struttura temporale rimane immediatamente disponibile al modello. Rappresentazione dell'input e architettura non possono quindi essere considerate due problemi completamente indipendenti.
+
+\begin{figure}[htbp]
+    \centering
+    % \includegraphics[width=0.95\textwidth]{images/placeholder_fig1_2.pdf}
+    \rule{0.9\textwidth}{4.5cm} % Box segnaposto in attesa del diagramma definitivo
+    \caption{Effetto qualitativo della discretizzazione temporale di un event stream. Finestre più ampie producono sequenze più corte ma aggregano una maggiore quantità di attività; finestre più strette preservano una granularità temporale maggiore al costo di un numero più elevato di passi di elaborazione.}
+    \label{fig:event_discretization}
+\end{figure}
+
+È in questo scenario che le reti neurali spiking assumono particolare interesse. Nelle reti neurali artificiali convenzionali, l'informazione è generalmente trasmessa attraverso valori di attivazione continui. Nelle Spiking Neural Networks, invece, l'unità computazionale possiede uno stato interno che evolve nel tempo e comunica attraverso eventi discreti, gli spike. Questa famiglia di modelli è stata descritta da Maass come una ``terza generazione'' di reti neurali proprio per il ruolo esplicito attribuito al tempo di emissione degli spike e alla dinamica neuronale~\cite{maass1997networks}.
+
+Senza anticipare il modello matematico dei neuroni che verrà introdotto nel capitolo~2, il comportamento di una generica unità spiking può essere sintetizzato attraverso due relazioni:
+\begin{equation}
+\label{eq:snn_generica}
+h_t = F(h_{t-1}, x_t), \qquad s_t = G(h_t),
+\end{equation}
+dove $x_t$ rappresenta l'ingresso corrente, $h_t$ lo stato interno del neurone e $s_t$ l'eventuale spike prodotto. La prima relazione evidenzia la proprietà che interessa maggiormente in questo contesto: lo stato al tempo $t$ dipende anche dallo stato presente al passo precedente. La rete possiede quindi una forma di memoria intrinseca.
+
+L'affinità con i dati event-based è forte. Il sensore produce variazioni sparse e temporalmente localizzate; la rete può integrare informazione nel tempo e propagare attività mediante eventi discreti. Inoltre, qualora gli spike rimangano sufficientemente sparsi e l'hardware sia progettato per sfruttare tale sparsità, l'assenza di attività può corrispondere all'assenza di parte della computazione. In questa prospettiva, un segnale nullo non rappresenta semplicemente un valore da moltiplicare per zero: può diventare un'operazione che non viene eseguita.
+
+Questo è uno dei principali motivi per cui le SNN sono studiate come possibile alternativa a basso consumo alle ANN convenzionali. Nel paradigma propriamente spike-driven, la comunicazione binaria consente inoltre di trasformare una parte delle operazioni associate alle attivazioni da moltiplicazioni e accumuli a semplici accumuli condizionati dalla presenza dello spike. Spike-driven Transformer formalizza esplicitamente questa proprietà: quando le comunicazioni intermedie sono binarie, diverse moltiplicazioni possono essere ricondotte a mascheramenti o somme sparse~\cite{yao2023spikedriven}.
+
+Tuttavia, l'esistenza di una memoria intrinseca non deve essere confusa con la capacità di modellare efficacemente qualunque relazione temporale.
+
+L'equazione~\eqref{eq:snn_generica} aiuta a comprenderne il motivo. Tutto ciò che il neurone conserva del passato deve essere sintetizzato nello stato $h_{t-1}$. Tale stato non costituisce una registrazione completa di tutti gli ingressi precedenti: è una loro rappresentazione compressa, determinata dalla dinamica del neurone, dai suoi parametri e dall'attività prodotta dalla rete. Due storie temporali differenti possono dunque condurre a stati interni molto simili. Informazione temporalmente lontana può decadere; dettagli relativi all'ordine possono non essere preservati; fenomeni rilevanti su scale temporali diverse possono competere all'interno della stessa dinamica.
+
+Avere uno stato significa quindi che il passato può influenzare il presente. Non significa che il modello abbia necessariamente imparato a conservarne gli aspetti discriminativi, né che sia in grado di mettere esplicitamente in relazione eventi distanti.
+
+Questa distinzione è sottile ma essenziale. Un modello potrebbe ottenere una buona accuratezza in un compito sequenziale utilizzando caratteristiche che cambiano poco rispetto all'ordine temporale. Potrebbe, per esempio, riconoscere una classe sulla base delle regioni maggiormente attive nel complesso della sequenza, senza dipendere in modo sostanziale dalla successione precisa con cui tali regioni si sono attivate. In quel caso la rete sarebbe temporalmente dinamica per costruzione, ma la decisione dipenderebbe solo in misura limitata dalla dinamica del fenomeno.
+
+In forma sintetica:
+\begin{equation}
+\label{eq:implicazione_stato}
+\text{presenza di stato temporale} \;\not\Rightarrow\; \text{uso efficace della struttura temporale}.
+\end{equation}
+L'equazione~\eqref{eq:implicazione_stato} non sminuisce il ruolo dei neuroni spiking. Al contrario, pone la domanda che occorre affrontare per sfruttarli in maniera consapevole: quale informazione temporale viene realmente conservata e utilizzata dalla rete?
+
+L'evoluzione degli Spiking Transformer rende questa domanda ancora più interessante. I Transformer, introdotti da Vaswani et al.~\cite{vaswani2017attention}, hanno mostrato quanto sia potente costruire rappresentazioni attraverso interazioni adattive tra elementi differenti dell'input. La self-attention permette infatti di modulare una rappresentazione sulla base della relazione con altre rappresentazioni, evitando che tutte le dipendenze debbano essere costruite esclusivamente attraverso una successione di operatori locali.
+
+L'integrazione di questo principio con le SNN ha prodotto una famiglia di architetture sempre più ampia. Spikformer ha dimostrato la possibilità di realizzare una Spiking Self-Attention utilizzando Query, Key e Value in forma spiking ed eliminando la softmax convenzionale~\cite{zhou2023spikformer}. Spike-driven Transformer ha riformulato ulteriormente l'attenzione in modo da utilizzare mascheramenti e accumuli sparsi, con l'obiettivo di conservare il paradigma event-driven lungo l'architettura~\cite{yao2023spikedriven}. QKFormer ha successivamente proposto una Q-K attention in forma binaria e una struttura gerarchica nella quale il numero dei token viene progressivamente ridotto, ottenendo complessità lineare rispetto al numero dei token o dei canali nel corrispondente meccanismo di attenzione~\cite{zhou2024qkformer}.
+
+Questi risultati hanno ridotto significativamente il divario tra l'espressività dei Transformer e i vincoli della computazione spiking. Hanno tuttavia messo in evidenza un aspetto che diventa particolarmente rilevante nei dati intrinsecamente dinamici. L'attenzione può essere molto potente nel modellare relazioni tra le feature presenti a un determinato timestep senza mettere direttamente in relazione feature appartenenti a timestep differenti.
+
+Si consideri una rappresentazione $X \in \mathbb{R}^{T \times N \times D}$, dove $T$ denota il numero di passi temporali, $N$ il numero di token e $D$ la dimensionalità delle feature. Un'attenzione applicata separatamente a ciascun $X_t$ può costruire relazioni tra i token
+\begin{equation*}
+X_{t,1}, X_{t,2}, \dots, X_{t,N},
+\end{equation*}
+ma il trasferimento dell'informazione da $X_{t-k}$ a $X_t$ rimane mediato principalmente dalla dinamica temporale dei neuroni. In altre parole, una forte capacità di attenzione spaziale non implica automaticamente una corrispondente capacità di attenzione temporale.
+
+Non si tratta soltanto di una possibilità teorica. Lee et al. individuano esplicitamente questa caratteristica negli Spiking Transformer esistenti e propongono STAtten, un meccanismo che estende la correlazione dell'attenzione alla dimensione temporale mediante elaborazione di blocchi spazio-temporali~\cite{lee2025spiking}. Gli autori mostrano che l'attenzione spatial-only di architetture quali Spikformer elabora le feature indipendentemente nei diversi timestep e che l'introduzione di correlazioni temporali esplicite migliora in modo consistente diversi backbone spiking.
+
+Il lavoro di Shi et al. sul Multi-Delay Mixer compie un passo ulteriore~\cite{shi2026multidelay}. Gli autori introducono il Temporal Interaction Coefficient per analizzare quanto differenti meccanismi di attenzione dipendano dall'informazione proveniente dagli istanti passati~\cite{shi2026multidelay}. L'analisi evidenzia interazioni temporali limitate e una forte dipendenza dalle dinamiche neuronali intrinseche; MD-Mixer introduce quindi ritardi multipli per combinare esplicitamente feature provenienti da differenti scale temporali prima dell'attenzione spaziale~\cite{shi2026multidelay}.
+
+La rilevanza di questi lavori non risiede soltanto nei moduli specifici che propongono. Essi indicano un cambiamento nella domanda scientifica. Non basta più chiedersi se una SNN contenga una dimensione temporale; diventa necessario chiedersi come quella dimensione sia rappresentata, quali interazioni temporali siano realmente possibili e quanto tali interazioni contribuiscano alla decisione finale.
+
+A questo punto emerge la seconda grande motivazione del presente lavoro: la capacità temporale deve essere ottenuta senza perdere ciò che rende le SNN interessanti dal punto di vista computazionale.
+
+Il termine ``efficienza'' richiede qui una certa cautela. È facile identificare la dimensione di una rete con il numero dei suoi parametri, ma le due nozioni non coincidono. In una rete temporale occorre memorizzare non soltanto i pesi sinaptici, ma anche stati che persistono tra timestep successivi. Un nuovo modulo può introdurre pochi parametri e, allo stesso tempo, richiedere un ampio buffer temporale. Un'architettura può possedere pochi pesi ma mantenere feature map di grandi dimensioni per molti passi. Allo stesso modo, una rete può essere composta da neuroni spiking ma generare un'attività sufficientemente densa da ridurre fortemente il vantaggio dell'elaborazione event-driven.
+
+Per questo motivo almeno quattro grandezze concettualmente differenti devono essere tenute separate:
+\begin{equation}
+\label{eq:quattro_grandezze}
+\text{parametri}, \qquad \text{stato persistente}, \qquad \text{numero e tipo delle operazioni}, \qquad \text{attività spiking}.
+\end{equation}
+
+Il numero dei parametri descrive principalmente lo spazio necessario per i pesi del modello. Lo stato persistente misura ciò che deve essere conservato mentre la sequenza viene elaborata. La natura delle operazioni distingue, per esempio, tra multiply-and-accumulate e accumuli condizionati dagli spike. L'attività spiking stabilisce infine quanto spesso tali operazioni vengono effettivamente attivate.
+
+Questo aspetto è particolarmente importante nel passaggio dal software all'hardware. Le GPU sono straordinariamente efficaci nell'esecuzione parallela di operazioni dense su tensori regolari, ma non sono state progettate specificamente per trasformare l'irregolarità di un flusso di spike in risparmio di calcolo. La survey di Karamimanesh et al. osserva che grandi sottoblocchi inattivi nei tensori spiking non vengono necessariamente sfruttati in modo efficiente dalle GPU e individua nelle architetture FPGA una piattaforma particolarmente interessante per la prototipazione e l'accelerazione delle SNN grazie alla possibilità di configurare parallelismo, memoria e datapath in funzione del modello~\cite{karamimanesh2025fpga}.
+
+Questa possibilità non è gratuita. Una FPGA dispone di quantità finite di memoria on-chip e risorse logiche, tra cui LUT, flip-flop, DSP e BRAM. L'aggiunta di stato neuronale, buffer e operatori complessi compete direttamente per tali risorse. Inoltre, come sottolineato dalla stessa letteratura, sfruttare la sparsità richiede una progettazione esplicita: circuiti di zero-skipping, gating e rappresentazioni sparse introducono un proprio overhead, che deve essere inferiore al lavoro risparmiato evitando le computazioni inattive~\cite{karamimanesh2025fpga}.
+
+Gli acceleratori specifici per Spiking Transformer forniscono un esempio concreto del principio. Li et al. codificano la posizione degli spike validi e saltano gli ingressi inattivi, utilizzando le sole attivazioni presenti per implementare operazioni lineari, max-pooling e Spike-Driven Self-Attention~\cite{li2024sparseacc}. Nel loro acceleratore FPGA, la natura binaria delle attivazioni permette di realizzare diverse computazioni attraverso addizioni e confronti anziché moltiplicazioni~\cite{li2024sparseacc}. Il beneficio deriva quindi dalla combinazione tra proprietà algoritmica e architettura hardware capace di sfruttarla, non dalla sola etichetta di ``rete spiking''.
+
+Questo conduce a una considerazione importante per la progettazione di modelli neuromorfici: l'efficienza hardware non dovrebbe essere valutata soltanto dopo aver terminato la ricerca architetturale. Se l'obiettivo finale comprende un deployment su una piattaforma vincolata, il costo dello stato e della computazione deve contribuire fin dall'inizio a definire quali modifiche siano realmente interessanti.
+
+Una soluzione che migliori le prestazioni introducendo una grande quantità di memoria temporale può essere valida dal punto di vista algoritmico e poco interessante dal punto di vista del sistema. Al contrario, una modifica capace di migliorare simultaneamente la rappresentazione e ridurre le dimensioni delle feature interne possiede un valore che la sola accuratezza non descrive completamente. La stessa osservazione vale per il firing rate: aumentare l'attività può rendere disponibile più informazione al modello, ma può erodere proprio la sparsità dalla quale dovrebbe derivare parte del vantaggio energetico.
+
+Il problema assume quindi la forma di un equilibrio tra esigenze che non coincidono necessariamente:
+\begin{equation}
+\label{eq:tradeoff_principale}
+\boxed{\text{capacità di modellazione temporale} \quad \longleftrightarrow \quad \text{compattezza} \quad \longleftrightarrow \quad \text{efficienza hardware}}
+\end{equation}
+
+Una rete progettata esclusivamente per il primo obiettivo può diventare troppo costosa; una rete ottimizzata soltanto per il secondo può non possedere capacità sufficiente; un sistema orientato soltanto alla sparsità può eliminare informazione necessaria al compito. Il punto di interesse non coincide pertanto con l'estremo di uno di questi assi, ma con la possibilità di trovare una configurazione nella quale le risorse disponibili vengano utilizzate per rappresentare l'informazione che conta maggiormente.
+
+È questa tensione a motivare il lavoro sviluppato nella tesi. L'interrogativo non riguarda soltanto la possibilità di rendere uno Spiking Transformer più accurato. Riguarda il modo in cui una quantità limitata di capacità architetturale debba essere distribuita tra elaborazione spaziale, memoria neuronale e interazione temporale esplicita, e il costo con cui tale capacità viene realizzata.
+
+Prima di cercare una risposta, tuttavia, è necessario compiere un passaggio meno ovvio: stabilire con sufficiente rigore quale sia esattamente il problema che si vuole risolvere. Una buona accuratezza su dati temporalmente strutturati non dimostra, da sola, che il modello abbia imparato a utilizzare quella struttura; un aumento delle prestazioni ottenuto aumentando la dimensione della rete non dimostra la superiorità di una particolare scelta architetturale; una riduzione dei parametri non dimostra automaticamente una maggiore efficienza hardware.
+
+Il sottocapitolo successivo restringe quindi il quadro appena delineato e colloca la ricerca all'interno di queste tre ambiguità. Il passaggio dal contesto al problema specifico richiede di distinguere con precisione prestazione, capacità temporale e allocazione delle risorse: tre concetti correlati, ma non intercambiabili.
+
+
+% ==============================================================================
+%  Problema aperto e posizionamento della ricerca
+% ==============================================================================
+
+
+\section{Problema aperto e posizionamento della ricerca}
+\label{sec:problema_aperto}
+
+Il quadro delineato nella sezione precedente lascia aperta una difficoltà metodologica prima ancora che architetturale. Se un modello ottiene buone prestazioni su un compito nel quale l'informazione è distribuita nel tempo, è naturale attribuire almeno parte del risultato alla sua capacità di elaborare la dinamica della sequenza. Questa conclusione, tuttavia, non segue necessariamente dall'accuratezza osservata.
+
+Una rete neurale viene addestrata a minimizzare una funzione obiettivo, non a risolvere il problema secondo il meccanismo che il progettista ritiene più plausibile. Se esiste una regolarità statistica più semplice da sfruttare e sufficientemente correlata con le etichette, il processo di ottimizzazione non ha alcun motivo per ignorarla. Un modello può quindi raggiungere una predizione corretta seguendo una strategia diversa da quella che implicitamente gli si attribuisce.
+
+Il fenomeno è noto nella letteratura sull'apprendimento profondo come \emph{shortcut learning}. Geirhos et al. definiscono shortcut quelle regole decisionali che permettono a un sistema di ottenere buone prestazioni nelle condizioni del benchmark, ma che non corrispondono necessariamente alla struttura del problema che si vorrebbe apprendere e possono fallire quando le condizioni di valutazione cambiano~\cite{geirhos2020shortcut}. Non tutte le scorciatoie hanno la stessa natura né sono necessariamente artefatti del dataset; il punto rilevante è più generale: il comportamento osservabile all'uscita non identifica univocamente il processo interno che ha prodotto la decisione.
+
+Nel caso dei dati event-based, questa ambiguità assume una forma particolarmente concreta. Si consideri un problema nel quale due classi differiscano per la dinamica del movimento, ma presentino anche differenze statistiche nel numero complessivo di eventi, nelle regioni maggiormente attive o nella distribuzione media delle polarità. Una rete può utilizzare l'ordine temporale, ma può anche scoprire che una combinazione di tali statistiche è già sufficientemente predittiva. Le due strategie possono produrre la stessa classe finale sul normale insieme di validazione. Soltanto la prima, però, costituirebbe evidenza che il modello abbia effettivamente sfruttato la relazione temporale di interesse.
+
+Di conseguenza, una metrica terminale come l'accuratezza
+\begin{equation}
+\label{eq:accuratezza_terminale}
+\operatorname{Acc} = \frac{N_{\mathrm{correct}}}{N_{\mathrm{samples}}}
+\end{equation}
+risponde con precisione alla domanda per cui è stata definita --- quanti campioni sono stati classificati correttamente --- ma non alla domanda
+\begin{equation*}
+\text{quale informazione ha reso possibile la classificazione?}
+\end{equation*}
+Le due questioni non devono essere confuse.
+
+Lo stesso ragionamento vale per F1-score, precision, recall o altre metriche aggregate. Queste misure possono caratterizzare meglio la qualità della classificazione, soprattutto in presenza di classi non perfettamente bilanciate, ma rimangono metriche dell'esito. Non descrivono direttamente il modo in cui l'informazione è stata accumulata lungo la sequenza.
+
+Per il problema affrontato in questa tesi è quindi necessario introdurre una distinzione tra prestazione sul task e competenza temporale del modello. Con il secondo termine non si intende attribuire alla rete una forma astratta di ``comprensione'' del tempo. Si intende una proprietà operativa, verificabile attraverso il comportamento del sistema: la misura in cui la decisione dipende dalla struttura temporale dell'ingresso e la capacità della rete di utilizzare informazione proveniente da istanti differenti.
+
+Questa definizione può essere resa più precisa considerando alcune proprietà distinte.
+
+Un modello temporalmente competente dovrebbe, quando il compito lo richiede, essere sensibile all'ordine degli elementi della sequenza. Se due input contengono sostanzialmente lo stesso contenuto ma differiscono per la successione temporale con cui esso si presenta, la rappresentazione interna dovrebbe poter preservare tale differenza.
+
+Dovrebbe inoltre essere capace di accumulare evidenza. In un fenomeno dinamico, l'informazione disponibile al tempo $t$ non coincide necessariamente con quella disponibile al termine della sequenza. Considerando un input
+\begin{equation*}
+X_{1:T} = (X_1, X_2, \dots, X_T),
+\end{equation*}
+è quindi utile non osservare soltanto la predizione finale
+\begin{equation*}
+\hat{y}_T = f(X_{1:T}),
+\end{equation*}
+ma anche il comportamento prodotto dai prefissi
+\begin{equation}
+\label{eq:predizioni_prefissi}
+\hat{y}_t = f(X_{1:t}), \qquad 1 \leq t < T.
+\end{equation}
+La successione delle predizioni $\hat{y}_1, \hat{y}_2, \dots, \hat{y}_T$ permette di osservare quando l'informazione discriminativa diventa disponibile, se il modello migliora progressivamente man mano che riceve nuovi dati e se parti tardive della sequenza contribuiscono effettivamente alla decisione.
+
+Un terzo aspetto riguarda la capacità di trattare scale temporali differenti. Come discusso in precedenza, una sequenza event-based può contenere transizioni rapide e dipendenze distribuite su intervalli molto più lunghi. Una rete che dipenda quasi esclusivamente dallo stato immediatamente precedente può comportarsi adeguatamente quando l'informazione rilevante è locale nel tempo e incontrare difficoltà quando la discriminazione richiede di collegare eventi più distanti.
+
+La letteratura recente sugli Spiking Transformer fornisce segnali sempre più chiari in questa direzione. STAtten mostra che diversi meccanismi di attenzione spiking precedenti operano prevalentemente sulle relazioni spaziali interne al timestep e che l'introduzione esplicita di correlazioni temporali migliora la rappresentazione delle sequenze~\cite{lee2025spiking}. Il Multi-Delay Mixer affronta il problema da una prospettiva ancora più diagnostica: gli autori introducono il Temporal Interaction Coefficient per quantificare la dipendenza dell'attenzione dalle informazioni storiche e osservano distribuzioni fortemente concentrate sul timestep corrente, con contributi limitati dagli istanti precedenti~\cite{shi2026multidelay}.
+
+Questo risultato è importante non tanto perché indichi una soluzione specifica --- i ritardi apprendibili proposti in quel lavoro rappresentano una delle possibili risposte --- quanto perché mostra la necessità di misurare il comportamento temporale prima di attribuirgli una causa architetturale. Lo stesso articolo sottolinea che l'assenza di metriche appropriate porta spesso a valutare il temporal modeling soltanto attraverso le metriche proprie del task, rendendo più difficile distinguere il miglioramento predittivo dal miglioramento della capacità temporale~\cite{shi2026multidelay}.
+
+La presente ricerca assume questa osservazione come principio metodologico. Un'architettura destinata all'elaborazione di event stream non viene considerata temporalmente migliore soltanto perché aumenta l'accuratezza finale. Il miglioramento deve essere interpretato insieme a esperimenti che permettano di stabilire, nei limiti consentiti dall'analisi empirica, se sia cambiato anche il modo in cui l'informazione temporale viene utilizzata.
+
+Questa esigenza sposta il problema dalla semplice ricerca di una nuova architettura a una sequenza più rigorosa: diagnosticare prima di modificare.
+
+Il secondo elemento che delimita il problema nasce dalla dimensione del modello.
+
+La tendenza generale delle moderne architetture neurali ha mostrato ripetutamente che un aumento della capacità può determinare un aumento delle prestazioni. Anche nel caso di QKFormer, la formulazione originale è stata progettata per rendere possibile la costruzione di Spiking Transformer gerarchici di dimensioni considerevoli: la Q-K attention sostituisce la matrice di attenzione quadratica con vettori binari di importanza sui token o sui canali, mentre la struttura gerarchica riduce progressivamente il numero di token nelle fasi più profonde della rete~\cite{zhou2024qkformer}.
+
+Questa direzione è estremamente efficace quando l'obiettivo consiste nell'avvicinare le SNN alle prestazioni delle ANN contemporanee. Non è però sufficiente per rispondere alla domanda affrontata qui.
+
+Supponiamo di confrontare due modelli $\mathcal{M}_1$ e $\mathcal{M}_2$, con
+\begin{equation*}
+P(\mathcal{M}_2) \gg P(\mathcal{M}_1),
+\end{equation*}
+e di osservare
+\begin{equation*}
+Q(\mathcal{M}_2) > Q(\mathcal{M}_1),
+\end{equation*}
+dove $P(\cdot)$ rappresenta il numero dei parametri e $Q(\cdot)$ una metrica di qualità. Il risultato dimostra che la seconda configurazione funziona meglio, ma non permette di stabilire se ciò dipenda dalla particolare struttura introdotta oppure dalla maggiore capacità disponibile.
+
+Per studiare una scelta architetturale occorre, per quanto possibile, ridurre questa ambiguità.
+
+Da questa considerazione deriva uno dei vincoli centrali del lavoro: la ricerca viene condotta principalmente in un regime fortemente compatto, con un budget obiettivo dell'ordine di
+\begin{equation}
+\label{eq:budget_obiettivo}
+P_{\mathrm{budget}} \simeq 5 \times 10^5
+\end{equation}
+parametri.
+
+La scelta non pretende di individuare una soglia universale oltre la quale un modello cessi di essere compatto. Il valore costituisce piuttosto un vincolo progettuale deliberatamente severo. Per confronto, il QKFormer presentato nella configurazione di maggiore scala raggiunge decine di milioni di parametri; persino le configurazioni utilizzate dagli autori sui benchmark neuromorfici rimangono nell'ordine dei milioni~\cite{zhou2024qkformer}. Portare l'architettura a circa mezzo milione di parametri modifica pertanto il problema: ogni componente deve giustificare la porzione di budget che occupa.
+
+La baseline sviluppata per questa ricerca, indicata nel seguito come Mini-QKFormer, nasce precisamente da questa scelta. Essa conserva i principi utili dell'architettura di origine --- elaborazione spiking, organizzazione gerarchica e Q-K attention --- riducendone profondità e dimensionalità in modo da ottenere un modello sufficientemente piccolo per rendere visibile il costo delle singole decisioni architetturali.
+
+Mini-QKFormer non viene quindi scelto perché mezzo milione di parametri rappresenti un optimum noto a priori, né perché l'obiettivo della ricerca sia semplicemente realizzare una versione compressa di QKFormer. Il suo ruolo è quello di costituire un regime sperimentale controllato. Se il budget è abbondante, diversi meccanismi possono essere aggiunti simultaneamente e l'aumento di capacità può nascondere inefficienze strutturali. Quando il budget è ristretto, al contrario, ogni risorsa assegnata a una parte del modello viene sottratta a un'altra.
+
+La domanda cambia allora forma. Non è più soltanto
+\begin{equation*}
+\text{quanta capacità serve?}
+\end{equation*}
+ma
+\begin{equation}
+\label{eq:dove_allocare}
+\boxed{\text{dove conviene collocare la capacità disponibile?}}
+\end{equation}
+
+Questo passaggio è centrale nel posizionamento della tesi.
+
+In un modello per dati visivi event-based, una quota significativa della computazione viene impiegata nelle prime fasi per trasformare l'input ad alta risoluzione in rappresentazioni progressivamente più compatte. Un'altra quota è utilizzata per elaborare le relazioni spaziali e tra canali; una terza è implicitamente dedicata alla memoria temporale attraverso gli stati dei neuroni. Quando il budget complessivo è limitato, aumentare indiscriminatamente tutte queste componenti non è possibile.
+
+La progettazione diventa quindi un problema di allocazione strutturale. Una modifica che riduce il costo di una parte della rete può essere interessante non soltanto perché rende il modello più piccolo, ma perché libera capacità che può essere investita altrove. Analogamente, un meccanismo temporale può essere utile non soltanto per il proprio guadagno isolato, ma perché utilizza in maniera più produttiva risorse rese disponibili da una diversa organizzazione del backbone.
+
+Questa prospettiva distingue il lavoro dal semplice model scaling. Un modello più grande rimane un controllo indispensabile: se aumentando notevolmente la capacità le prestazioni non migliorano, sarebbe difficile sostenere che il limite della baseline dipenda da una carenza di rappresentazione. Se invece lo scaling produce un miglioramento, si dimostra l'esistenza di headroom, ma non ancora che il prezzo da pagare debba essere un aumento uniforme della rete.
+
+Il confronto realmente interessante diventa allora quello tra due strategie:
+\begin{equation}
+\label{eq:scaling_vs_redesign}
+\underbrace{\text{aumentare la capacità totale}}_{\text{scaling}} \qquad\text{e}\qquad \underbrace{\text{ridistribuire la capacità disponibile}}_{\text{redesign}}.
+\end{equation}
+La seconda strategia è quella privilegiata dalla tesi.
+
+Il vincolo parametrico, tuttavia, non esaurisce il problema della compattezza. Come discusso nella sezione 1.1, due reti con lo stesso numero di parametri possono richiedere quantità molto diverse di stato, operazioni e traffico di memoria. Questo diventa particolarmente importante quando la capacità aggiuntiva è temporale. Mantenere feature provenienti da più timestep può richiedere buffer persistenti; estendere l'interazione temporale può aumentare il numero delle operazioni; rendere più attivi i neuroni può diminuire la sparsità.
+
+La stessa STAtten offre un esempio istruttivo. Gli autori riescono a introdurre correlazioni temporali mantenendo la medesima complessità asintotica dell'attenzione spatial-only attraverso una strategia block-wise, ma riconoscono che la necessità di conservare più informazione temporale introduce comunque difficoltà concrete per il deployment neuromorfico~\cite{lee2025spiking}. Il problema hardware non scompare quindi perché la notazione $\mathcal{O}(\cdot)$ rimane invariata.
+
+Allo stesso modo, MD-Mixer sceglie una diversa posizione nel compromesso: anziché costruire una correlazione spazio-temporale completa, arricchisce le feature utilizzando ritardi multipli e adattivi, cercando un temporal mixing più leggero~\cite{shi2026multidelay}. La presenza di soluzioni tanto diverse nella letteratura recente è indicativa del fatto che non esista un'unica nozione di ``modulo temporale'': la struttura del meccanismo determina quali dipendenze possono essere rappresentate e quale costo deve essere sostenuto per farlo.
+
+Il problema scientifico della tesi si colloca esattamente in questo spazio, ma introduce un vincolo aggiuntivo: la modellazione temporale viene studiata in un regime nel quale non è possibile assorbirne liberamente il costo attraverso un modello più grande.
+
+Ne emerge un research gap più specifico rispetto alla generica osservazione che gli Spiking Transformer necessitino di una migliore modellazione temporale.
+
+La letteratura ha mostrato, da una parte, come rendere l'attenzione spiking progressivamente più efficiente e scalabile~\cite{zhou2023spikformer, yao2023spikedriven, zhou2024qkformer}; dall'altra, lavori recenti hanno dimostrato i limiti di un'attenzione prevalentemente spaziale e proposto meccanismi espliciti per aumentare l'interazione tra timestep~\cite{lee2025spiking, shi2026multidelay}. QKFormer stesso evidenzia che l'elaborazione temporale comporta un costo sostanziale in memoria e computazione e indica tra le direzioni future la ricerca di architetture efficienti capaci di operare con un numero ridotto di timestep~\cite{zhou2024qkformer}.
+
+Rimane però meno esplorata l'intersezione tra tre domande: come diagnosticare se un compact Spiking Transformer stia realmente utilizzando la struttura temporale; come intervenire su tale capacità senza risolvere il problema attraverso il semplice scaling; come valutare la soluzione tenendo conto, fin dalla progettazione, dello stato e della computazione richiesti da una futura implementazione hardware.
+
+È questa intersezione, più che uno specifico meccanismo architetturale, a definire il posizionamento della presente ricerca.
+
+La domanda non è pertanto se sia possibile aggiungere memoria, ritardi, attenzione temporale o dinamiche neuronali più sofisticate a una rete esistente. Tutte queste possibilità sono già note, almeno nelle loro forme generali. Il problema è stabilire quale intervento sia giustificato dalla diagnosi del modello, quale informazione aggiunga, quale parte del budget consumi e se il guadagno ottenuto sopravviva quando il confronto viene condotto a capacità e costo controllati.
+
+Questa impostazione conduce naturalmente alla formulazione degli obiettivi e delle domande di ricerca.
+
+
+% ==============================================================================
+%  Obiettivi, domande e ipotesi di ricerca
+% ==============================================================================
+
+
+\section{Obiettivi, domande e ipotesi di ricerca}
+\label{sec:obiettivi_domande_ipotesi}
+
+L'obiettivo generale della tesi è progettare e caratterizzare un compact Spiking Transformer per l'elaborazione di stream neuromorfici temporalmente complessi, capace di migliorare l'uso dell'informazione temporale rispetto a una baseline derivata da QKFormer senza ricorrere a un aumento indiscriminato della dimensione del modello e mantenendo proprietà favorevoli a una futura implementazione su FPGA.
+
+La formulazione contiene volutamente il verbo caratterizzare oltre a progettare. Proporre un'architettura più accurata non sarebbe, da solo, sufficiente a rispondere al problema delineato nella sezione precedente. È necessario comprendere quali limiti siano presenti nella baseline, quale proprietà venga modificata da ciascun intervento e quale costo accompagni il miglioramento osservato.
+
+L'obiettivo generale può quindi essere espresso attraverso tre dimensioni che devono rimanere connesse durante l'intero lavoro:
+\begin{equation}
+\label{eq:dimensioni_lavoro}
+\mathcal{M} \longrightarrow \left( Q_{\mathrm{task}}, Q_{\mathrm{temporal}}, C_{\mathrm{hardware}} \right),
+\end{equation}
+dove $Q_{\mathrm{task}}$ rappresenta la qualità della predizione, $Q_{\mathrm{temporal}}$ il comportamento del modello rispetto alla struttura temporale e $C_{\mathrm{hardware}}$ il profilo di costo rilevante per la successiva realizzazione.
+
+Nessuna delle tre quantità viene considerata sufficiente isolatamente. Una modifica che aumenta $Q_{\mathrm{task}}$ ma non mostra alcun cambiamento nel comportamento temporale può comunque essere un buon miglioramento di classificazione, ma non costituisce automaticamente una risposta alla domanda di questa tesi. Analogamente, un meccanismo che migliori alcuni indicatori temporali introducendo un costo incompatibile con il regime compatto può fornire un risultato scientificamente interessante senza rappresentare una soluzione progettuale soddisfacente.
+
+L'intera ricerca è guidata da una domanda centrale:
+\begin{equation}
+\label{eq:domanda_centrale}
+\boxed{
+\begin{minipage}{0.82\textwidth}
+\itshape
+Come progettare un compact Spiking Transformer capace di utilizzare efficacemente la struttura temporale degli event stream, allocando la capacità del modello in modo più produttivo rispetto al semplice scaling e preservando caratteristiche compatibili con un futuro deployment su FPGA?
+\end{minipage}
+}
+\end{equation}
+
+Questa domanda viene scomposta in quattro research questions. La separazione non è puramente espositiva: ciascuna domanda richiede un diverso tipo di evidenza e corrisponde a una fase distinta del percorso sperimentale.
+
+\vspace{0.8em}
+\noindent\textbf{RQ1} --- \emph{In quale misura una baseline Spiking Transformer compatta utilizza effettivamente la struttura temporale dell'ingresso, oltre alle informazioni di contenuto che rimangono disponibili indipendentemente dal loro ordine?}
+
+La prima domanda precede ogni tentativo di miglioramento architetturale. Il punto non è stabilire genericamente se la rete possieda memoria --- la presenza di neuroni dinamici rende questa proprietà già nota --- ma capire quanto la decisione dipenda da relazioni temporali specifiche.
+
+In termini operativi, si vuole distinguere almeno tra informazione relativa al contenuto e informazione relativa alla dinamica. La prima comprende le caratteristiche che possono rimanere riconoscibili anche quando la struttura temporale viene parzialmente alterata; la seconda comprende ordine, progressione e contributo relativo di differenti porzioni della sequenza.
+
+L'ipotesi associata alla prima domanda è che una buona prestazione terminale non implichi necessariamente una dipendenza altrettanto forte dall'ordine temporale. In forma compatta:
+\begin{equation}
+\label{eq:h1}
+H_1: \qquad Q_{\mathrm{task}}\text{ elevato} \;\not\Rightarrow\; Q_{\mathrm{temporal}}\text{ elevato}.
+\end{equation}
+
+L'equazione~\eqref{eq:h1} deve essere letta come un'ipotesi sperimentale e non come un'affermazione universale. La sua verifica richiede perturbazioni temporali controllate e misure che vadano oltre la sola predizione finale.
+
+Questo primo interrogativo ha anche una funzione metodologica più ampia. Se la baseline risultasse già fortemente dipendente dall'ordine e capace di utilizzare efficacemente informazioni provenienti dall'intera sequenza, sarebbe necessario riconsiderare l'ipotesi che il temporal modeling costituisca il principale collo di bottiglia. L'audit iniziale non è quindi progettato per confermare una conclusione prestabilita, ma per decidere se tale conclusione sia giustificata.
+
+\vspace{0.8em}
+\noindent\textbf{RQ2} --- \emph{Quali componenti e quali meccanismi della baseline limitano la rappresentazione e l'accumulo dell'informazione temporale nel regime compatto considerato?}
+
+Una volta stabilito se esista un limite temporale, la seconda domanda riguarda dove tale limite si manifesti.
+
+Questa distinzione è necessaria perché una prestazione insufficiente può avere origini molto differenti. Il problema potrebbe derivare da una capacità globale troppo bassa; dalla perdita di informazione nelle prime fasi di elaborazione; da una memoria cross-time insufficiente; da un readout incapace di utilizzare correttamente lo stato disponibile; oppure da una combinazione di questi fattori.
+
+Attribuire anticipatamente il problema all'attenzione o al neurone sarebbe metodologicamente debole.
+
+Il ruolo della seconda research question è quindi discriminare tra spiegazioni concorrenti mediante controlli architetturali. Il modello deve essere sottoposto a interventi che, per quanto possibile, isolino proprietà differenti. Per esempio, eliminare una forma di ricorrenza temporale risponde a una domanda diversa dall'aumentare la larghezza della rete; modificare il readout testa un'ipotesi ancora diversa.
+
+L'ipotesi di lavoro è che la memoria neuronale tra timestep sia necessaria, ma non costituisca da sola una capacità temporale sufficientemente ricca nel regime considerato:
+\begin{equation}
+\label{eq:h2}
+H_2: \qquad \text{cross-time state necessario} \quad\text{ma non necessariamente sufficiente}.
+\end{equation}
+
+La parola sufficiente è qui essenziale. Non si cerca di dimostrare che le dinamiche neuronali siano inadeguate in senso assoluto. Si vuole verificare se, nella specifica architettura compatta e nei compiti considerati, la sola propagazione dello stato riesca a utilizzare tutto il potenziale temporale disponibile.
+
+\vspace{0.8em}
+\noindent\textbf{RQ3} --- \emph{A parità approssimativa di budget, è possibile ottenere un miglior compromesso prestazioni--complessità riallocando la capacità architetturale verso la modellazione temporale, invece di aumentare uniformemente la dimensione della rete?}
+
+Questa è la domanda progettuale centrale della tesi.
+
+Se i controlli di capacità mostrano che una rete più grande dispone di margine prestazionale, esistono almeno due modi per sfruttarlo. Il primo consiste semplicemente nell'aumentare il numero dei parametri. Il secondo consiste nel ridurre il costo di componenti meno produttive e utilizzare le risorse liberate per introdurre capacità maggiormente coerente con il collo di bottiglia individuato.
+
+Il problema può essere espresso attraverso due modelli $\mathcal{M}_a$ e $\mathcal{M}_b$ tali che
+\begin{equation*}
+P(\mathcal{M}_a) \approx P(\mathcal{M}_b) \approx P_{\mathrm{budget}},
+\end{equation*}
+ma con allocazioni interne differenti. L'obiettivo è verificare se esista una configurazione per cui
+\begin{equation}
+\label{eq:confronto_qualita}
+Q(\mathcal{M}_b) > Q(\mathcal{M}_a)
+\end{equation}
+non perché $\mathcal{M}_b$ disponga di una maggiore capacità complessiva, ma perché utilizzi meglio quella disponibile.
+
+L'ipotesi principale del lavoro può essere formalizzata come
+\begin{equation}
+\label{eq:h3}
+H_3: \qquad \text{una riallocazione mirata della capacità} > \text{uno scaling uniforme}
+\end{equation}
+nel compromesso tra qualità predittiva e costo, almeno nel regime compatto studiato.
+
+Il simbolo $>$ nell'equazione~\eqref{eq:h3} non indica una relazione matematica assoluta. Esprime una dominanza desiderata nello spazio multi-obiettivo: maggiore o comparabile qualità con una quantità sostanzialmente inferiore di parametri, stato o computazione.
+
+Questa ipotesi è particolarmente importante perché rende il lavoro più generale della semplice ricerca di una nuova combinazione di moduli. Se confermata, suggerirebbe un principio progettuale: quando le risorse sono fortemente limitate, la posizione in cui la capacità viene spesa può essere più importante della quantità totale disponibile.
+
+\vspace{0.8em}
+\noindent\textbf{RQ4} --- \emph{I miglioramenti ottenuti sul piano temporale e predittivo possono essere mantenuti senza compromettere le proprietà necessarie a una futura implementazione FPGA efficiente?}
+
+La quarta domanda impedisce che l'efficienza hardware venga relegata a una verifica puramente conclusiva.
+
+Due architetture con identico numero di parametri possono avere profili molto diversi. Per questa ragione il budget parametrico viene affiancato da quantità quali stato persistente, attività spiking e tipologia delle operazioni. Indicando genericamente con
+\begin{equation}
+\label{eq:vettore_costo}
+\mathbf{C}(\mathcal{M}) = \left[ P,\; S,\; N_{\mathrm{AC}},\; N_{\mathrm{MAC}},\; \rho \right]
+\end{equation}
+il vettore di costo di un modello, $S$ rappresenta la quantità di stato persistente, $N_{\mathrm{AC}}$ e $N_{\mathrm{MAC}}$ il numero delle principali classi di operazioni e $\rho$ una misura dell'attività spiking.
+
+L'obiettivo non consiste necessariamente nel minimizzare simultaneamente ogni componente di $\mathbf{C}$, eventualità poco realistica. Si cerca piuttosto di evitare che un miglioramento temporale venga ottenuto attraverso uno spostamento del costo che lo renda poco interessante sul target hardware.
+
+L'ipotesi corrispondente è quindi:
+\begin{equation}
+\label{eq:h4}
+H_4: \qquad \exists\,\mathcal{M}^\star \quad \text{tale che} \quad Q_{\mathrm{temporal}}\uparrow,\; Q_{\mathrm{task}}\uparrow, \quad \mathbf{C}(\mathcal{M}^\star) \text{ rimanga compatibile con il target}.
+\end{equation}
+
+La verifica finale dell'ipotesi richiede necessariamente più livelli di analisi. Nelle prime fasi sarà possibile utilizzare proxy software --- numero e tipo delle operazioni, firing rate, memoria degli stati --- mentre una valutazione più completa richiederà quantizzazione e profilazione sulla piattaforma FPGA scelta. La distinzione tra stima algoritmica e misura hardware verrà mantenuta esplicita nel seguito della tesi.
+
+Le quattro domande non sono indipendenti. Costituiscono una sequenza logica:
+\begin{equation}
+\label{eq:catena_rq}
+\underbrace{\text{il modello usa il tempo?}}_{\mathrm{RQ1}} \longrightarrow \underbrace{\text{dove si trova il limite?}}_{\mathrm{RQ2}} \longrightarrow \underbrace{\text{come riallocare la capacità?}}_{\mathrm{RQ3}} \longrightarrow \underbrace{\text{il risultato rimane efficiente?}}_{\mathrm{RQ4}}.
+\end{equation}
+Questa sequenza è forse la sintesi più compatta dell'intero lavoro.
+
+\begin{figure}[htbp]
+    \centering
+    % \includegraphics[width=0.95\textwidth]{images/placeholder_fig1_3.pdf}
+    \rule{0.9\textwidth}{4.5cm} % Box segnaposto per la catena causale RQ1-RQ4
+    \caption{Articolazione delle domande di ricerca. La progettazione architetturale segue la diagnosi del comportamento temporale e precede la validazione hardware, in modo da separare progressivamente uso dell'informazione, origine del limite, efficacia della riallocazione di capacità e costo della soluzione.}
+    \label{fig:articolazione_rq}
+\end{figure}
+
+Esiste infine un obiettivo trasversale che non richiede una research question autonoma ma condiziona tutte le precedenti: la replicabilità dell'evidenza. Una differenza osservata su una singola inizializzazione può suggerire un'ipotesi, ma non è sufficiente per sostenere una conclusione forte. Il comportamento delle SNN dipende da inizializzazione, dinamica degli spike e procedura di ottimizzazione; le configurazioni candidate dovranno pertanto essere confermate attraverso più seed e confronti condotti con ricette di addestramento controllate.
+
+Questa esigenza è particolarmente importante nel caso di analisi meccanicistiche. Un singolo checkpoint può produrre una spiegazione apparentemente convincente che non sopravvive alla variazione del seed. Per questo motivo, nel presente lavoro la distinzione tra esperimento esplorativo, evidenza utilizzata per prendere una decisione e risultato sufficientemente replicato per sostenere un claim viene mantenuta esplicita.
+
+Le research questions definiscono così non soltanto ciò che la tesi intende dimostrare, ma anche ciò che non sarebbe sufficiente a dimostrarlo. Un miglior risultato di classificazione non basta a rispondere a RQ1; una variante più grande non basta a rispondere a RQ3; un conteggio inferiore dei parametri non basta a rispondere a RQ4. Ogni domanda richiede la propria evidenza.
+
+È proprio questa separazione che permette di trasformare una successione di esperimenti architetturali in un percorso scientifico coerente.
+
+
+% ==============================================================================
+%  Approccio metodologico della ricerca
+% ==============================================================================
+
+
+\section{Approccio metodologico della ricerca}
+\label{sec:approccio_metodologico}
+
+Le domande formulate nella sezione precedente richiedono tipi di evidenza differenti. Questa osservazione ha influenzato direttamente l'organizzazione del lavoro sperimentale. In particolare, si è evitato di trattare la ricerca architetturale come una sequenza di modifiche applicate alla baseline e ordinate unicamente sulla base della metrica finale. Un simile procedimento consentirebbe di individuare configurazioni efficaci, ma renderebbe difficile comprendere perché funzionino e, soprattutto, distinguere un reale miglioramento strutturale da variazioni dovute alla capacità del modello, alla procedura di addestramento o alla variabilità sperimentale.
+
+Il lavoro è stato quindi organizzato come una successione di fasi, ciascuna costruita per risolvere un'incertezza lasciata aperta dalla precedente. L'architettura viene modificata soltanto dopo avere stabilito una baseline sufficientemente stabile; le modifiche vengono introdotte per verificare ipotesi esplicite; il raffinamento della procedura di addestramento viene deliberatamente separato dalla ricerca architetturale; la valutazione hardware viene considerata già durante la selezione dei candidati, pur essendo approfondita soltanto dopo il congelamento della struttura finale.
+
+Il principio generale può essere sintetizzato come
+\begin{equation}
+\label{eq:metodologia_sequenza}
+\text{osservazione} \rightarrow \text{diagnosi} \rightarrow \text{ipotesi} \rightarrow \text{intervento} \rightarrow \text{controllo} \rightarrow \text{validazione}.
+\end{equation}
+Questa sequenza non rappresenta soltanto un modo conveniente di ordinare gli esperimenti. Serve a mantenere un legame causale tra il problema osservato e la soluzione proposta.
+
+Il primo requisito è la disponibilità di una baseline affidabile. Prima di attribuire significato a differenze tra architetture è infatti necessario assicurarsi che il riferimento sia correttamente realizzato, che la pipeline dei dati sia deterministica per quanto ragionevolmente possibile e che le metriche utilizzate siano calcolate in maniera coerente. La baseline deve inoltre raggiungere prestazioni sufficientemente stabili da rendere interpretabile il confronto con configurazioni alternative.
+
+Nel presente lavoro questo ruolo è svolto da Mini-QKFormer, la variante compatta introdotta nella sezione 1.2. La costruzione della baseline non viene considerata una semplice fase preliminare di ingegnerizzazione. Nel regime di capacità studiato, anche modifiche apparentemente secondarie alla rappresentazione dei dati, al numero dei timestep o alla disposizione dei blocchi possono alterare sensibilmente il comportamento del modello. Per questa ragione la baseline viene congelata prima di iniziare il confronto sistematico tra varianti e le modifiche successive vengono valutate rispetto alla medesima ricetta sperimentale, salvo quando l'esperimento richieda esplicitamente di alterarne una componente.
+
+Una particolare attenzione viene dedicata alla separazione tra insieme di addestramento, insieme di validazione e insieme di test. La scelta dell'architettura, la promozione delle varianti e il confronto tra ipotesi vengono condotti senza utilizzare ripetutamente il test set come strumento di selezione. La valutazione finale sul test set assume significato soltanto quando le principali decisioni progettuali sono state congelate. In caso contrario, l'insieme formalmente destinato alla verifica finale diventerebbe progressivamente parte del processo di ottimizzazione, compromettendone la funzione.
+
+Stabilita la baseline, il secondo passaggio riguarda la diagnosi del comportamento temporale. Come discusso nella sezione precedente, non si assume che una buona classificazione sia prova sufficiente dell'utilizzo dell'ordine temporale. Prima di introdurre meccanismi più sofisticati è quindi necessario capire quali informazioni siano già rappresentate e quali siano effettivamente utilizzate per la decisione.
+
+Per questo motivo una parte iniziale della ricerca adotta un approccio di tipo meccanicistico. Invece di modificare immediatamente la rete, si interviene sugli input o sulle rappresentazioni interne e se ne osservano le conseguenze. Tra le domande considerate rientrano, per esempio, la sensibilità alla permutazione temporale, la capacità di discriminare sequenze che condividono contenuto ma differiscono per ordine, l'evoluzione della qualità della predizione utilizzando prefissi progressivamente più lunghi e l'effettiva utilità dell'informazione disponibile nelle parti tardive della sequenza.
+
+Il principio è vicino a quello di un esperimento controllato: alterare una proprietà mantenendo il più possibile invariate le altre.
+
+Una perturbazione temporale, per esempio, è informativa soltanto se permette di distinguere la perdita dovuta alla distruzione dell'ordine dalla perdita causata da un cambiamento più generale della distribuzione degli input. Analogamente, la presenza di informazione temporale in una rappresentazione interna non implica che il classificatore la utilizzi causalmente. Per questo motivo analisi puramente osservative, come i linear probe, possono essere affiancate a interventi sulle attivazioni interne. Il primo tipo di analisi misura se una determinata informazione sia decodificabile; il secondo cerca di stabilire se modificare tale informazione alteri effettivamente la predizione.
+
+Questa distinzione,
+\begin{equation}
+\label{eq:info_disponibile_vs_utilizzata}
+\text{informazione disponibile} \neq \text{informazione utilizzata},
+\end{equation}
+è uno dei criteri che guidano la fase diagnostica.
+
+Solo dopo avere costruito una descrizione sufficientemente solida del comportamento della baseline si passa alla diagnosi architetturale. In questa fase le modifiche non hanno ancora lo scopo principale di costruire il modello finale: vengono utilizzate come controlli.
+
+Un controllo di capacità, per esempio, consiste nell'aumentare significativamente la dimensione della rete mantenendo invariata la struttura generale. Se la prestazione cresce, il risultato suggerisce che la baseline compatta dispone di margine e che almeno una parte del limite può essere superata aumentando la capacità. Non indica però dove tale capacità dovrebbe essere collocata.
+
+Un controllo che interrompe la comunicazione tra timestep risponde a una domanda differente: stabilisce quanto il modello dipenda dalla propria ricorrenza temporale. Un cambiamento del readout permette invece di verificare se l'informazione necessaria sia già disponibile negli stati interni ma venga aggregata in maniera inefficace in uscita.
+
+L'uso di tali controlli riduce il rischio di attribuire a un nuovo meccanismo una funzione che potrebbe essere spiegata da un intervento molto più semplice.
+
+Una volta escluse le spiegazioni più immediate, inizia la vera ricerca architetturale.
+
+Anche in questa fase viene mantenuta una separazione tra modifiche che agiscono su aspetti differenti della rete. Una variante può intervenire sul costo del front-end spaziale; una seconda può aumentare esplicitamente l'interazione tra rappresentazioni temporali; una terza può rendere adattiva la dinamica dei neuroni. Considerare inizialmente questi interventi in isolamento permette di associare il cambiamento osservato a una causa più circoscritta.
+
+Solo successivamente vengono studiate le composizioni tra componenti che hanno mostrato proprietà complementari.
+
+Questo ordine è particolarmente importante nel regime di capacità imposto dalla tesi. Se due modifiche vengono aggiunte simultaneamente e la configurazione risultante migliora, non è immediatamente possibile stabilire se entrambe siano necessarie, se una compensi il costo dell'altra o se il guadagno derivi semplicemente dall'aumento del numero dei parametri. L'ablation study non viene quindi relegato alla fase finale come semplice verifica editoriale dell'architettura proposta, ma costituisce parte integrante del processo con cui l'architettura viene costruita.
+
+La promozione di una variante segue inoltre più criteri. La qualità finale della classificazione rimane naturalmente centrale, ma viene considerata insieme al numero di parametri, alla quantità di stato persistente, alle operazioni introdotte e, quando disponibile, al comportamento della rete lungo la dimensione temporale.
+
+In termini concettuali, la scelta non ricerca
+\begin{equation*}
+\arg\max_{\mathcal{M}} Q_{\mathrm{task}}(\mathcal{M}),
+\end{equation*}
+indipendentemente dal costo, ma un insieme di soluzioni non dominate nello spazio
+\begin{equation}
+\label{eq:spazio_soluzioni_pareto}
+\left( Q_{\mathrm{task}}, Q_{\mathrm{temporal}}, P, S, N_{\mathrm{MAC}}, N_{\mathrm{AC}}, \rho \right).
+\end{equation}
+
+Il concetto di frontiera di Pareto risulta quindi più appropriato di quello di singolo optimum. Un'architettura viene dominata se esiste una seconda configurazione che offre prestazioni almeno equivalenti richiedendo meno risorse rilevanti; al contrario, una modifica che migliora la qualità riducendo contemporaneamente una parte significativa del costo assume particolare interesse.
+
+\begin{figure}[htbp]
+    \centering
+    % \includegraphics[width=0.95\textwidth]{images/placeholder_fig1_4.pdf}
+    \rule{0.9\textwidth}{5cm} % Box segnaposto per workflow metodologico
+    \caption{Organizzazione metodologica della ricerca. Ogni fase riduce un'incertezza specifica prima che il modello venga promosso alla fase successiva; tuning e co-design hardware vengono affrontati soltanto dopo la stabilizzazione della struttura architetturale.}
+    \label{fig:workflow_metodologico_dettagliato}
+\end{figure}
+
+La ricerca architetturale viene inoltre separata deliberatamente dal raffinamento della procedura di addestramento. Augmentation, scheduling del learning rate, regolarizzazione e ricerca degli iperparametri possono produrre miglioramenti anche consistenti. Se introdotti contemporaneamente a una modifica strutturale, tuttavia, rendono difficile identificare la causa del cambiamento osservato.
+
+Per questo motivo tali tecniche vengono esplorate sistematicamente soltanto dopo aver individuato un'architettura capace di superare la baseline con una ricetta il più possibile controllata. Questa scelta sacrifica una parte delle prestazioni che potrebbero essere ottenute nelle prime fasi, ma aumenta la leggibilità scientifica degli esperimenti.
+
+Una considerazione analoga riguarda il numero dei dataset utilizzati durante lo sviluppo. Il lavoro impiega più benchmark neuromorfici, ma evita di utilizzare ciascuno di essi come terreno simultaneo per la ricerca architetturale. Il dataset principale viene utilizzato per discriminare tra ipotesi e selezionare il candidato; successivamente, una volta congelate le principali decisioni strutturali, il modello viene trasferito agli altri benchmark per verificare se i principi osservati siano specifici del task oppure possiedano maggiore generalità.
+
+Nel presente lavoro DVS-Lip svolge principalmente il ruolo di ambiente di sviluppo temporale, mentre DVS-Gesture, CIFAR10-DVS e DailyDVS vengono utilizzati, con ruoli differenti, nella successiva fase di verifica della generalizzazione. La descrizione dei dataset, dei protocolli e delle rispettive suddivisioni viene rinviata al capitolo sperimentale, dove può essere trattata con il dettaglio necessario senza interrompere l'argomentazione del presente capitolo.
+
+Prima che un risultato venga considerato conclusivo viene infine richiesta la replicazione su più inizializzazioni casuali. I run a singolo seed svolgono una funzione preziosa nell'esplorazione: permettono di scartare rapidamente configurazioni chiaramente inferiori e di investire risorse sui candidati più promettenti. Non vengono però utilizzati, da soli, come base per sostenere differenze di piccola entità tra architetture.
+
+Per i confronti principali vengono quindi riportate statistiche aggregate e, quando il protocollo lo permette, differenze accoppiate tra configurazioni addestrate con gli stessi seed. Questo accorgimento è particolarmente importante nelle SNN, dove la combinazione tra inizializzazione, surrogate gradient, soglia di firing e dinamica temporale può amplificare la variabilità tra run.
+
+L'ultima fase riguarda il co-design hardware. Una volta congelato il candidato architetturale, le informazioni raccolte durante la profilazione software vengono trasformate in vincoli più concreti: precisione numerica, footprint dei pesi e degli stati, organizzazione dei buffer, possibilità di parallelizzazione, utilizzo delle risorse FPGA e rapporto tra operazioni dense e spike-driven. Quantizzazione e, se giustificata dai risultati, potatura vengono introdotte in questa fase perché modificano a loro volta il comportamento della rete e devono essere valutate rispetto alla configurazione architetturale già stabilizzata.
+
+Il metodo complessivo cerca quindi di mantenere separati tre problemi che è facile sovrapporre:
+\begin{equation}
+\label{eq:tre_problemi_separati}
+\text{progettare una buona architettura}, \qquad \text{addestrarla nel modo migliore}, \qquad \text{realizzarla efficientemente in hardware}.
+\end{equation}
+Le tre attività sono interdipendenti, ma non vengono ottimizzate tutte contemporaneamente. Questa scelta riduce lo spazio delle combinazioni da esplorare e, soprattutto, permette di attribuire maggiore significato ai risultati ottenuti.
+
+
+% ==============================================================================
+%  Contributi e originalità del lavoro
+% ==============================================================================
+
+
+\section{Contributi e originalità del lavoro}
+\label{sec:contributi_originalita}
+
+Alla luce delle domande di ricerca e dell'impostazione metodologica appena descritta, il contributo della tesi non deve essere identificato con un singolo modulo architetturale. Il lavoro riguarda più in generale il modo in cui viene analizzata, progettata e valutata la capacità temporale di uno Spiking Transformer fortemente compatto.
+
+È importante precisare questa distinzione perché alcune delle idee considerate --- neuroni con dinamiche adattive, interazioni temporali esplicite, rappresentazioni multi-scala --- possiedono precedenti nella letteratura. L'originalità del lavoro non consiste quindi nel sostenere che concetti quali temporal mixing o learnable time constants siano introdotti qui per la prima volta. Essa risiede nella loro analisi all'interno di un problema progettuale specifico, nella costruzione di controlli che ne separino gli effetti e nella ricerca di una soluzione sotto un vincolo simultaneo di capacità e hardware efficiency.
+
+I contributi principali possono essere sintetizzati nei seguenti punti:
+\begin{itemize}
+    \item \textbf{Un'impostazione diagnostica per lo studio della modellazione temporale nei Compact Spiking Transformer.} \\
+    Il lavoro non assume che la natura dinamica della rete garantisca un utilizzo efficace del tempo. Viene costruito un protocollo di analisi volto a separare contenuto e ordine temporale, a studiare l'accumulo dell'evidenza lungo la sequenza e a distinguere, per quanto possibile, informazione rappresentata da informazione causalmente utilizzata. Questo passaggio fornisce una base empirica alle successive decisioni architetturali.
+
+    \item \textbf{Una baseline QKFormer portata in un regime di capacità fortemente limitato e accompagnata da controlli mirati.} \\
+    Mini-QKFormer trasforma un'architettura concepita per modelli sensibilmente più grandi in un banco di prova nel quale circa mezzo milione di parametri devono essere distribuiti tra codifica spaziale, attenzione e dinamica temporale. Controlli di scaling, rimozione della comunicazione cross-time e variazioni del readout vengono utilizzati per distinguere limiti di capacità generale da limiti più specificamente temporali.
+
+    \item \textbf{Uno studio sistematico della riallocazione della capacità tra elaborazione spaziale e temporale.} \\
+    Le modifiche progettate nel corso del lavoro agiscono su componenti differenti: efficienza del front-end, interazione temporale esplicita e dinamica neuronale. Il loro confronto isolato e combinato permette di studiare non soltanto se una configurazione funzioni, ma quale parte del budget utilizzi e quale funzione svolga. L'obiettivo è verificare se una migliore distribuzione delle risorse possa competere con modelli ottenuti attraverso semplice scaling.
+
+    \item \textbf{Una valutazione temporale e prestazionale che non si esaurisce nella metrica terminale.} \\
+    Oltre alle metriche tradizionali di classificazione, il lavoro considera l'evoluzione della predizione durante la sequenza, l'utilità dell'evidenza disponibile a tempi differenti e il comportamento sotto perturbazioni temporali. Ciò consente di caratterizzare configurazioni che possono produrre effetti differenti sull'early recognition e sulla decisione finale, evitando di classificare una modifica come utile o inutile sulla base di un singolo numero.
+
+    \item \textbf{L'integrazione della prospettiva hardware nel processo di selezione architetturale.} \\
+    Parametri, stato persistente, attività spiking e natura delle operazioni vengono trattati come metriche di progetto e non soltanto come statistiche accessorie. La configurazione selezionata viene successivamente sottoposta a quantizzazione, profilazione e co-design in vista dell'implementazione su FPGA, collegando il guadagno algoritmico alle risorse necessarie per realizzarlo.
+\end{itemize}
+
+Questi contributi sono volutamente formulati a un livello che rimane indipendente dal risultato numerico di una singola configurazione. Nel seguito della tesi essi verranno progressivamente associati a evidenze quantitative, ablation study e confronti con la letteratura.
+
+La conclusione più forte che il lavoro aspira a sostenere è di natura progettuale. In un regime estremamente compatto, la capacità complessiva non rappresenta l'unica variabile utile per prevedere le prestazioni: può essere altrettanto importante stabilire quale funzione venga finanziata da quella capacità. Se la validazione sperimentale confermerà questa ipotesi, il risultato non sarà semplicemente che una determinata variante supera Mini-QKFormer, ma che una parte delle risorse tradizionalmente impiegate nell'elaborazione spaziale può essere reinvestita nella modellazione temporale con un rapporto più favorevole tra qualità e costo.
+
+È una distinzione non secondaria. Un risultato del primo tipo è legato soprattutto all'architettura proposta; un risultato del secondo fornisce invece un'indicazione riutilizzabile nella progettazione di altri modelli spiking compatti.
+
+
+% ==============================================================================
+%  Struttura della tesi
+% ==============================================================================
+
+
+\section{Struttura della tesi}
+\label{sec:struttura_tesi}
+
+Il resto del documento segue la stessa progressione logica adottata nel percorso sperimentale. Dopo avere definito in questo capitolo il problema, le domande di ricerca e il metodo utilizzato per affrontarle, la trattazione procede dai fondamenti teorici alla diagnosi della baseline, quindi allo sviluppo architetturale e infine alla validazione e al co-design hardware.
+
+Il \textbf{capitolo~2}, \emph{Fondamenti e stato dell'arte}, introduce con maggiore profondità gli elementi teorici necessari per comprendere il lavoro. Vengono descritti il funzionamento delle telecamere a eventi e le principali rappresentazioni degli event stream, i modelli neuronali utilizzati nelle SNN e i meccanismi di addestramento tramite surrogate gradient. La trattazione passa quindi dagli Spiking Transformer alle principali famiglie di attenzione spike-driven, con particolare attenzione a Spikformer, Spike-driven Transformer e QKFormer. Una parte specifica viene dedicata alla modellazione temporale esplicita e ai lavori più recenti --- tra cui STAtten, Multi-Delay Mixer e approcci basati su dinamiche neuronali adattive --- che costituiscono il riferimento teorico per le scelte successive. Il capitolo termina con una revisione delle implicazioni hardware delle SNN e degli Spiking Transformer.
+
+Il \textbf{capitolo~3}, \emph{Baseline e protocollo sperimentale}, descrive Mini-QKFormer e il processo attraverso il quale la baseline viene derivata dall'architettura di riferimento. Sono presentati la pipeline dei dati, le rappresentazioni utilizzate, i criteri di training e validazione, le metriche predittive e temporali e il sistema di profilazione della complessità. Nello stesso capitolo vengono descritti i benchmark utilizzati e viene formalizzato il protocollo con cui le diverse configurazioni vengono confrontate.
+
+Il \textbf{capitolo~4}, \emph{Analisi meccanicistica della modellazione temporale}, affronta direttamente la prima research question. Il capitolo raccoglie gli esperimenti dedicati alla separazione tra contenuto e ordine, alle perturbazioni temporali, alla prefix evaluation, all'analisi dell'evidenza tardiva e alle rappresentazioni interne. Particolare attenzione viene riservata alla distinzione tra informazione decodificabile e informazione causalmente necessaria alla decisione. L'obiettivo del capitolo non è ancora proporre una nuova architettura, ma stabilire quali aspetti del comportamento temporale richiedano effettivamente un intervento.
+
+Il \textbf{capitolo~5}, \emph{Diagnosi della baseline nel regime compatto}, trasferisce le indicazioni dell'audit al principale contesto di sviluppo sperimentale. Vengono utilizzati controlli di capacità, ablazioni della memoria cross-time e variazioni della strategia di readout per distinguere tra insufficiente capacità complessiva, limiti della dinamica temporale e inefficienze dell'allocazione architetturale. Il capitolo costituisce il collegamento tra la fase diagnostica e quella progettuale: ogni modifica sviluppata successivamente viene ricondotta a un limite emerso in questa analisi.
+
+Il \textbf{capitolo~6}, \emph{Riallocazione della capacità e sviluppo architetturale}, costituisce il nucleo progettuale della tesi. Vengono introdotte e analizzate le principali modifiche alla baseline, comprese quelle relative al front-end spaziale, al temporal mixing, alle dinamiche neuronali e, quando supportato dai risultati, alla rappresentazione temporale multi-granulare. Ogni intervento viene confrontato con la baseline e con i controlli appropriati. Le composizioni vengono studiate soltanto dopo avere caratterizzato i singoli componenti. Il capitolo termina con la selezione del candidato architetturale che offre il compromesso più favorevole tra qualità, capacità e costo.
+
+Il \textbf{capitolo~7}, \emph{Validazione, generalizzazione e raffinamento}, verifica la robustezza delle conclusioni raggiunte. Il candidato viene confrontato con la baseline su più seed e trasferito agli altri benchmark neuromorfici previsti dal lavoro. Soltanto dopo il congelamento della struttura vengono affrontati gli interventi di raffinamento non architetturale, tra cui augmentation, regolarizzazione e ottimizzazione della procedura di training. I risultati finali vengono quindi confrontati con i principali riferimenti disponibili in letteratura, mantenendo distinta la comparazione con modelli di capacità, paradigmi computazionali e condizioni sperimentali differenti.
+
+Il \textbf{capitolo~8}, \emph{Co-design e implementazione FPGA}, studia le conseguenze hardware della soluzione selezionata. La profilazione algoritmica viene tradotta in requisiti di memoria e computazione; vengono affrontati quantizzazione, organizzazione degli stati, buffering temporale e possibilità di sfruttare la sparsità degli spike. Quando disponibile, la sintesi FPGA permette di sostituire le stime software con misure concrete di utilizzo delle risorse, latenza, throughput ed efficienza energetica. Il capitolo chiude così il percorso iniziato dalla quarta research question, verificando quanto del vantaggio teorico rimanga effettivamente sfruttabile sulla piattaforma target.
+
+Il \textbf{capitolo~9}, \emph{Conclusioni}, ricompone i risultati rispetto alle domande formulate nella sezione 1.3. Le conclusioni non vengono organizzate come una semplice ripetizione dei risultati sperimentali, ma come risposta esplicita alle research questions. Vengono infine discusse le limitazioni del lavoro, gli aspetti che non è stato possibile isolare completamente e le direzioni che appaiono più promettenti per sviluppi successivi.
+
+La struttura complessiva segue quindi un movimento intenzionale:
+\begin{equation}
+\label{eq:struttura_movimento}
+\text{fondamenti} \rightarrow \text{misura} \rightarrow \text{diagnosi} \rightarrow \text{progettazione} \rightarrow \text{validazione} \rightarrow \text{realizzazione}.
+\end{equation}
+Non si tratta soltanto dell'ordine con cui i capitoli vengono presentati. È, nelle intenzioni di questo lavoro, il principio con cui è stata condotta la ricerca.
