@@ -22,6 +22,12 @@
 *.toc
 *.vrb
 *.xdv
+*.pdf
+
+AGENT.md
+
+artifacts/*
+docs/*
 
 # File di backup ed editor
 *~
