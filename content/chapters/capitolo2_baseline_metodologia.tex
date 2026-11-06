@@ -1,0 +1,494 @@
+\chapter{Baseline compatta e metodologia sperimentale}
+\label{chap:baseline_metodologia}
+
+% Fonti verificate il 2026-11-04 sul repository temporal-event-spiking-research,
+% branch Predictive-Temporal-Coding, commit 5a03fec: src/etsr/models/{mini_qkformer,layers,spiking,sequence}.py,
+% src/etsr/encoders/count.py, configs/{models,recipes,datasets,splits}, config_resolved.yaml e
+% summary.json dei run B E0 (dvslip 20260825_211710, dvsgesture 20261009_174645,
+% cifar10dvs 20261009_184314, thu_eact_50_chl 20261011_093547), hardware_profile_v4.json di B su DVS-Lip,
+% audit di sviluppo in artifacts/datasets/*. Nessun dato del test ufficiale.
+
+Ogni modifica architetturale discussa nel seguito viene misurata rispetto a un riferimento, e quella misura vale soltanto quanto la precisione con cui il riferimento è stato fissato. Questo capitolo lo definisce in tutte le sue parti. Descrive i quattro dataset su cui si svolge la sperimentazione, il modo in cui il flusso di eventi diventa l'ingresso della rete di partenza, l'architettura della baseline compatta ispirata a QKFormer e la ricetta con cui viene addestrata. Stabilisce poi come i modelli vengono valutati e confrontati, quali tipi di controllo sperimentale vengono impiegati e con quali grandezze se ne caratterizza il costo computazionale.
+
+La baseline non è concepita come un avversario da battere, ma come un punto fisso da cui partono tre percorsi distinti, ciascuno dei quali modifica un solo fattore. Il primo ridistribuisce la capacità all'interno della rete lasciando invariato l'ingresso. Il secondo cambia il clock dell'input tenendo ferma l'architettura. Il terzo arricchisce la memoria temporale a parità di input. Perché i tre percorsi restino leggibili, ciò che in ciascuno di essi rimane costante va dichiarato una volta per tutte, ed è questo il compito delle pagine che seguono.
+
+
+% ==============================================================================
+%  Dataset
+% ==============================================================================
+
+\section{Dataset}
+\label{sec:dataset}
+
+La sperimentazione si svolge su quattro benchmark neuromorfici di classificazione, scelti perché affidano all'informazione temporale ruoli molto diversi. In DVS-Lip le classi sono parole pronunciate, distinte da movimenti labiali brevi e spesso simili tra loro, e l'ordine in cui si susseguono le configurazioni della bocca è parte essenziale del segnale. DVS128 Gesture raccoglie gesti ampi e in larga parte ripetitivi, di durata variabile, alcuni dei quali si distinguono soltanto per il verso del movimento. CIFAR10-DVS deriva da immagini statiche rese visibili al sensore attraverso un movimento imposto, e la sua dinamica è prodotta dall'acquisizione più che dal contenuto. THU-EACT-50-CHL, infine, contiene azioni umane complete, riprese da un sensore a risoluzione più elevata e con durate molto variabili da un campione all'altro. Un meccanismo temporale utile in uno di questi scenari non lo è necessariamente negli altri, ed è proprio questa eterogeneità a rendere il confronto informativo.
+
+\subsection{DVS-Lip}
+\label{subsec:dvslip}
+
+% DA VERIFICARE: sensore DAVIS346 e ritaglio 128x128 attorno alla bocca, dal paper MSTP.
+DVS-Lip è un dataset di lettura labiale a eventi, introdotto insieme alla rete MSTP~\cite{tan2022dvslip}. Raccoglie registrazioni di 100 parole inglesi pronunciate da 40 parlanti, acquisite con una event camera DAVIS346 e rilasciate come regioni di $128\times128$ pixel attorno alla bocca. La partizione ufficiale assegna al training 30 parlanti, con $14\,896$ campioni, e al test i restanti 10, con $4\,975$ campioni~\cite{tan2022dvslip}. Le registrazioni sono brevi, con una durata mediana di circa $1{,}08\,\mathrm{s}$ e massima di $1{,}89\,\mathrm{s}$, e relativamente povere di eventi, circa ottomila al secondo in mediana. Il segnale utile si concentra in un'area ristretta dell'immagine e in variazioni di forma molto fini.
+
+Il vocabolario è costruito in modo da includere parole visivamente confondibili. Gli autori ne individuano 25 coppie, per un totale di 50 parole, alle quali si aggiungono le restanti 50~\cite{tan2022dvslip}. Questa struttura permette di affiancare all'accuratezza complessiva due accuratezze parziali, Acc1 sul gruppo delle parole confondibili e Acc2 sull'altro, che vengono riportate anche in questo lavoro.
+
+\subsection{DVS128 Gesture}
+\label{subsec:dvsgesture}
+
+DVS128 Gesture è stato acquisito con un sensore DVS128, a $128\times128$ pixel, e comprende 11 classi, dieci gesti di mani e braccia e una classe residua che raccoglie movimenti diversi~\cite{amir2017dvsgesture}. Le registrazioni coinvolgono 29 soggetti in diverse condizioni di illuminazione, e la partizione ufficiale riserva al test i soggetti dal 24 al 29~\cite{amir2017dvsgesture}. Ogni registrazione contiene più gesti consecutivi, delimitati da annotazioni temporali. In questo lavoro un campione coincide con un segmento annotato, e la sua origine temporale con l'inizio del segmento. Il training ufficiale ne contiene $1\,176$, che durano in mediana circa $6{,}4\,\mathrm{s}$ ma in alcuni casi superano i $18\,\mathrm{s}$, con circa cinquantamila eventi al secondo in mediana. Diverse classi differiscono soltanto per il braccio impiegato o per il verso di rotazione, e questa proprietà esclude trasformazioni come il ribaltamento orizzontale, che scambierebbero tra loro classi diverse.
+
+\subsection{CIFAR10-DVS}
+\label{subsec:cifar10dvs}
+
+CIFAR10-DVS converte in eventi $10\,000$ immagini del dataset CIFAR-10, mille per ciascuna delle dieci classi~\cite{li2017cifar10dvs}. Le immagini, visualizzate su un monitor, vengono fatte muovere con un movimento regolare e ripetuto davanti a un sensore DVS128, così che i loro contorni generino eventi~\cite{li2017cifar10dvs}. La risoluzione è di $128\times128$ pixel e le registrazioni hanno durate molto uniformi, con una mediana di circa $1{,}30\,\mathrm{s}$ e un massimo di $1{,}46\,\mathrm{s}$. Sono anche le più dense del gruppo, con oltre centocinquantamila eventi al secondo in mediana. Poiché il contenuto è statico, la struttura temporale riflette soprattutto la traiettoria imposta durante l'acquisizione, e il dataset rappresenta un termine di confronto in cui è lecito attendersi che la memoria temporale pesi meno che negli altri casi.
+
+% La convenzione 0-99 per classe come insieme riservato è quella adottata, tra gli altri, da TEBN
+% (Duan et al., NeurIPS 2022). Eventualmente citarla dopo verifica.
+Il dataset non prevede una partizione ufficiale. In questo lavoro i campioni con indice da 0 a 99 di ciascuna classe formano un insieme riservato (holdout) di $1\,000$ registrazioni, escluso dallo sviluppo, mentre i restanti $9\,000$ costituiscono l'insieme di sviluppo.
+
+\subsection{THU-EACT-50-CHL}
+\label{subsec:thueact}
+
+THU-EACT-50 è un benchmark per il riconoscimento di azioni umane con event camera, articolato in 50 classi~\cite{gao2023action}. Accanto alla versione principale, gli autori rilasciano THU-EACT-50-CHL, acquisita con un sensore DAVIS346 a $346\times260$ pixel, che è la versione adottata in questo lavoro. Comprende $2\,330$ registrazioni di 18 soggetti, ripartite dagli autori tra training e test in modo che nessun soggetto compaia in entrambi. La durata mediana è di circa $2{,}7\,\mathrm{s}$, ma la distribuzione ha una coda lunga e alcuni campioni si avvicinano ai $20\,\mathrm{s}$, mentre il numero di eventi per registrazione spazia da circa diecimila a oltre quattro milioni. Rispetto agli altri tre dataset, la risoluzione maggiore moltiplica il numero di posizioni spaziali, e dunque di token, che la rete deve elaborare a ogni passo.
+
+\begin{figure}[htbp]
+    \centering
+    % \includegraphics[width=0.95\textwidth]{images/cap2/placeholder_cap2_fig1.pdf}
+    \rule{0.9\textwidth}{5.2cm} % Box segnaposto per Fig. 2.1
+    \caption{Esempi di campioni dei quattro dataset. Per ciascuno sono mostrati alcuni frame di conteggio, con gli eventi ON e OFF in colori distinti, e l'andamento nel tempo della frequenza di eventi dell'intera registrazione.}
+    \label{fig:esempi_dataset}
+\end{figure}
+
+\subsection{Partizioni di sviluppo}
+\label{subsec:partizioni_sviluppo}
+
+Le partizioni di test ufficiali non partecipano allo sviluppo. Tutte le decisioni, dalla configurazione dell'input alla scelta del checkpoint da valutare, si basano su una partizione di validazione ricavata dal solo insieme di training, indicata nel seguito come validazione di sviluppo (\emph{development validation}).
+
+Su DVS-Lip i $14\,896$ campioni del training ufficiale vengono suddivisi in modo deterministico e stratificato per classe, con $11\,901$ campioni di addestramento e $2\,995$ di validazione. Su DVS128 Gesture la validazione è formata dai segmenti di cinque soggetti del training ufficiale, l'8, l'11, il 17, il 19 e il 22, per un totale di 264 segmenti contro i 912 destinati all'addestramento. Su CIFAR10-DVS l'insieme di sviluppo viene diviso in modo stratificato, con 90 campioni per classe in validazione, 900 in tutto, e $8\,100$ in addestramento. Su THU-EACT-50-CHL, infine, i soggetti 8, 10 e 14 del training ufficiale formano la validazione, con 399 registrazioni contro le $1\,387$ di addestramento, mentre le 544 registrazioni del test ufficiale restano riservate.
+
+Le partizioni sono definite una volta per tutte, prima di qualsiasi esperimento, e condivise da tutti i modelli, così che ogni confronto avvenga esattamente sugli stessi campioni. La tabella~\ref{tab:dataset_sintesi} riassume queste informazioni insieme alle principali statistiche delle registrazioni.
+
+\begin{table}[htbp]
+\centering
+\small
+\renewcommand{\arraystretch}{1.2}
+\caption{Sintesi dei dataset e delle partizioni di sviluppo. La partizione riservata è il test ufficiale, tranne che per CIFAR10-DVS, per il quale coincide con l'insieme di holdout. Le durate sono calcolate sulle sole partizioni di sviluppo e riportano il valore mediano e, tra parentesi, il massimo.}
+\label{tab:dataset_sintesi}
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{@{}l c c r r r c@{}}
+\hline
+\textbf{Dataset} & \textbf{Classi} & \textbf{Risoluz.} & \textbf{Addestr.} & \textbf{Valid.} & \textbf{Riservati} & \textbf{Durata [s]} \\
+\hline
+DVS-Lip & 100 & $128\times128$ & $11\,901$ & $2\,995$ & $4\,975$ & $1{,}08$ ($1{,}89$) \\
+DVS128 Gesture & 11 & $128\times128$ & 912 & 264 & 288 & $6{,}36$ ($18{,}46$) \\
+CIFAR10-DVS & 10 & $128\times128$ & $8\,100$ & 900 & $1\,000$ & $1{,}30$ ($1{,}46$) \\
+THU-EACT-50-CHL & 50 & $346\times260$ & $1\,387$ & 399 & 544 & $2{,}71$ ($19{,}91$) \\
+\hline
+\end{tabular}
+\end{table}
+
+
+% ==============================================================================
+%  Rappresentazione dell'input nella baseline
+% ==============================================================================
+
+\section{Rappresentazione dell'input nella baseline}
+\label{sec:input_baseline}
+
+La baseline riceve il flusso di eventi sotto forma di frame di conteggio a finestra fissa (\emph{fixed-window count frames}), la più diretta tra le rappresentazioni introdotte nella sezione~\ref{sec:rappresentazione_event_camera}. A partire dall'origine temporale del campione si considera una finestra $[0,D_{\mathrm{win}})$, la si suddivide in $T$ bin consecutivi della stessa durata secondo l'equazione~\eqref{eq:finestre_fisse}, e in ciascun bin si contano separatamente, pixel per pixel, gli eventi ON e quelli OFF, come nell'equazione~\eqref{eq:event_frame_accumulo}. Il campione diventa così un tensore
+\begin{equation}
+\label{eq:input_baseline}
+X=\bigl(F_0,\ldots,F_{T-1}\bigr)\in\mathbb N_0^{T\times2\times H\times W},
+\qquad
+\Delta t=\frac{D_{\mathrm{win}}}{T},
+\end{equation}
+con un canale per ciascuna polarità. Gli istogrammi di eventi a due canali sono tra le rappresentazioni più diffuse nell'apprendimento profondo su dati neuromorfici~\cite{maqueda2018event,gallego2022event}. La variante adottata qui si caratterizza per due scelte, una durata dei bin comune a tutti i campioni di un dataset e una finestra di durata prefissata, indipendente dalla lunghezza della registrazione. Nel seguito la si indicherà semplicemente come rappresentazione a finestra fissa.
+
+In tutti i dataset la sequenza conta $T=40$ passi. Si tratta di un budget comune di passi, non di una risoluzione temporale comune, perché la durata della finestra, e con essa quella dei bin, è scelta separatamente per ciascun dataset in base alla distribuzione delle durate di sviluppo (tabella~\ref{tab:finestre_input}). Su DVS-Lip e CIFAR10-DVS una finestra di $2\,\mathrm{s}$ con bin da $50\,\mathrm{ms}$ contiene per intero anche le registrazioni più lunghe, e lo stesso vale su DVS128 Gesture per una finestra di $20\,\mathrm{s}$ con bin da $500\,\mathrm{ms}$. Su THU-EACT-50-CHL la coda lunga delle durate impone un compromesso. Una finestra estesa fino al campione più lungo avrebbe richiesto bin di mezzo secondo, mentre la finestra di $8\,\mathrm{s}$ conserva bin da $200\,\mathrm{ms}$ e il $99{,}06\%$ degli eventi di sviluppo, al prezzo di troncare due sole registrazioni della validazione.
+
+I conteggi sono interi esatti, memorizzati su 8 bit. Se un pixel accumulasse in un singolo bin più di 255 eventi la codifica verrebbe interrotta con un errore, anziché saturare silenziosamente il valore, ma nessun campione di sviluppo raggiunge questo limite. Il massimo osservato va da 17 eventi per pixel e per bin su DVS-Lip a 236 su DVS128 Gesture, dove i bin sono dieci volte più lunghi. La rete riceve i conteggi convertiti in virgola mobile, senza alcuna normalizzazione.
+
+\begin{table}[htbp]
+\centering
+\small
+\renewcommand{\arraystretch}{1.2}
+\caption{Parametri della rappresentazione a finestra fissa. Le ultime due colonne si riferiscono alle partizioni di sviluppo. La frazione di finestra occupata è il rapporto tra la durata mediana delle registrazioni e la durata della finestra.}
+\label{tab:finestre_input}
+\begin{adjustbox}{max width=\textwidth}
+\begin{tabular}{l c c c c c}
+\hline
+\textbf{Dataset} & \textbf{Finestra $D_{\mathrm{win}}$} & \textbf{Bin $\Delta t$} & \textbf{Passi $T$} & \textbf{Eventi conservati} & \textbf{Finestra occupata} \\
+\hline
+DVS-Lip & $2\,\mathrm{s}$ & $50\,\mathrm{ms}$ & 40 & $100\%$ & $54\%$ \\
+DVS128 Gesture & $20\,\mathrm{s}$ & $500\,\mathrm{ms}$ & 40 & $100\%$ & $32\%$ \\
+CIFAR10-DVS & $2\,\mathrm{s}$ & $50\,\mathrm{ms}$ & 40 & $100\%$ & $65\%$ \\
+THU-EACT-50-CHL & $8\,\mathrm{s}$ & $200\,\mathrm{ms}$ & 40 & $99{,}06\%$ & $34\%$ \\
+\hline
+\end{tabular}
+\end{adjustbox}
+\end{table}
+
+Una finestra prefissata ha un effetto collaterale che conviene rendere esplicito fin d'ora. Le registrazioni più brevi della finestra lasciano vuoti gli ultimi bin, che non sono padding ma osservazioni valide di un intervallo senza attività, secondo la distinzione discussa a proposito dell'equazione~\eqref{eq:maschera_passi_validi}. La rete li elabora comunque, e il readout descritto più avanti ne include i contributi nella propria media. L'entità del fenomeno varia molto da un dataset all'altro. Rapportando la durata mediana alla finestra, la parte di sequenza effettivamente occupata da eventi è di circa il $65\%$ su CIFAR10-DVS e il $54\%$ su DVS-Lip, ma scende al $34\%$ su THU-EACT-50-CHL e al $32\%$ su DVS128 Gesture, dove un campione tipico trascorre più di due terzi dei passi senza ricevere alcun evento. Le conseguenze di questa scelta, insieme alle rappresentazioni che modificano il clock dell'input, sono analizzate nel capitolo dedicato al clock dell'input. % TODO: \ref al capitolo sul clock dell'input
+Nei capitoli che precedono quell'analisi la rappresentazione a finestra fissa resta invariata, così che ogni differenza osservata possa essere attribuita all'architettura.
+
+\begin{figure}[htbp]
+    \centering
+    % \includegraphics[width=0.95\textwidth]{images/cap2/placeholder_cap2_fig2.pdf}
+    \rule{0.9\textwidth}{4.8cm} % Box segnaposto per Fig. 2.2
+    \caption{Costruzione della rappresentazione a finestra fissa. Il flusso di eventi viene suddiviso in $T=40$ bin della stessa durata a partire dall'origine del campione, e in ogni bin si contano separatamente gli eventi ON e OFF di ciascun pixel. I bin successivi all'ultimo evento restano vuoti ma fanno parte della sequenza elaborata dalla rete. In basso, la distribuzione delle durate di sviluppo di ciascun dataset rispetto alla finestra adottata.}
+    \label{fig:frame_finestra_fissa}
+\end{figure}
+
+
+% ==============================================================================
+%  Architettura della baseline compatta
+% ==============================================================================
+
+\section{Architettura della baseline compatta}
+\label{sec:architettura_baseline}
+
+La baseline compatta è un'implementazione autonoma, scritta per questo lavoro, che conserva i principi di QKFormer descritti nella sezione~\ref{sec:qkformer_riferimento} riducendone drasticamente la scala. Non è una riproduzione fedele del codice originale, e le differenze sono riassunte alla fine della sezione. Il backbone si articola in due stadi gerarchici. Un primo patch embedding porta l'ingresso a un ottavo della risoluzione con 64 canali, un blocco con Q-K Token Attention elabora questa rappresentazione, un secondo patch embedding ne dimezza ancora la risoluzione portando i canali a 128, e un blocco con spiking self-attention completa l'elaborazione prima del readout. La figura~\ref{fig:architettura_baseline} ne mostra la struttura, la tabella~\ref{tab:architettura_baseline} le dimensioni.
+
+\begin{figure}[htbp]
+    \centering
+    % \includegraphics[width=0.95\textwidth]{images/cap2/placeholder_cap2_fig3.pdf}
+    \rule{0.9\textwidth}{6cm} % Box segnaposto per Fig. 2.3
+    \caption{Architettura della baseline compatta. Il primo patch embedding riduce la risoluzione di un fattore otto con un ramo principale di quattro convoluzioni e una scorciatoia diretta dalla prima mappa di feature. Seguono un blocco con Q-K Token Attention, un secondo patch embedding e un blocco con spiking self-attention. Il readout media le feature finali su spazio e tempo prima della testa lineare. Le dimensioni indicate si riferiscono a un ingresso di $128\times128$ pixel.}
+    \label{fig:architettura_baseline}
+\end{figure}
+
+\subsection{Neurone e convenzioni di calcolo}
+\label{subsec:neurone_convenzioni}
+
+Tutti i neuroni della rete sono LIF, discretizzati secondo lo schema di Eulero dell'equazione~\eqref{eq:lif_euler_discreto} e dotati di soft reset~\eqref{eq:soft_reset}. Per un neurone che riceve la corrente $X_k$ al passo $k$,
+\begin{equation}
+\label{eq:lif_baseline}
+H_k=V_{k-1}+\frac{X_k-V_{k-1}}{\tau_d},
+\qquad
+S_k=\Theta\bigl(H_k-V_{\mathrm{th}}\bigr),
+\qquad
+V_k=H_k-S_kV_{\mathrm{th}},
+\end{equation}
+con $\tau_d=2$, $V_{\mathrm{th}}=1$ e potenziale azzerato all'inizio di ogni campione. Fanno eccezione i neuroni che producono le decisioni dell'attenzione, descritti più avanti, la cui soglia è dimezzata. Durante l'addestramento la derivata dello spike viene sostituita dalla surrogata sigmoidale dell'equazione~\eqref{eq:surrogate_sigmoide} con $\alpha=4$, e il termine di reset è trattato come una costante nel passaggio all'indietro.
+
+Con $\tau_d=2$ il fattore di decadimento vale $\lambda=1/2$. In assenza di ingresso il potenziale si dimezza a ogni passo, e la costante di tempo fisica equivalente dell'equazione~\eqref{eq:tau_fisica_equivalente} vale $\tau_{\mathrm{eq}}=\Delta t/\ln2\approx1{,}44\,\Delta t$. Lo stesso neurone, con gli stessi parametri, dimentica dunque in tempi fisici molto diversi a seconda del dataset, circa $72\,\mathrm{ms}$ su DVS-Lip e CIFAR10-DVS, circa $290\,\mathrm{ms}$ su THU-EACT-50-CHL e circa $720\,\mathrm{ms}$ su DVS128 Gesture. La relazione descrive un integratore isolato al di sotto della soglia, ma basta a mostrare che la scelta del clock fissa anche l'orizzonte della memoria neuronale.
+
+Tutti gli altri operatori, cioè convoluzioni, normalizzazioni e proiezioni lineari, vengono applicati a ogni passo in modo indipendente, come se i $T$ passi fossero campioni distinti. Nella baseline l'unico canale attraverso cui l'informazione passa da un istante al successivo è quindi lo stato dei neuroni, come in QKFormer~\eqref{eq:attenzione_istante_t}. Le convoluzioni sono prive di bias, perché ciascuna è seguita da batch normalization, e i loro pesi, come quelli delle proiezioni lineari, sono inizializzati secondo lo schema di He et al.~\cite{he2015delving}.
+
+I collegamenti residui sommano l'ingresso di un sottoblocco alla sua uscita a valle dei neuroni, e la somma non attraversa un'ulteriore soglia. I tensori scambiati tra un blocco e l'altro contengono perciò piccoli interi, somme di più spike, anziché valori strettamente binari. La proprietà è condivisa con QKFormer, come mostrano le equazioni~\eqref{eq:blocco_qkformer_qka} e~\eqref{eq:blocco_qkformer_smlp}, e ha conseguenze dirette sul conteggio delle operazioni discusso nella sezione~\ref{sec:caratterizzazione_computazionale}.
+
+\subsection{Primo patch embedding}
+\label{subsec:primo_embedding}
+
+Il primo patch embedding traduce i conteggi in spike e riduce la risoluzione di un fattore otto. Il ramo principale è una cascata di quattro convoluzioni $3\times3$, ciascuna seguita da batch normalization e da un neurone LIF. La prima conserva la risoluzione e porta i canali da 2 a 32, le altre tre dimezzano a turno la risoluzione con passo 2 e portano i canali a 64. In parallelo, un ramo di scorciatoia preleva le feature del primo strato e le porta direttamente alla risoluzione finale con una convoluzione $1\times1$ di passo 8, seguita anch'essa da normalizzazione e neurone. Le due uscite, entrambe spiking, vengono sommate,
+\begin{equation}
+\label{eq:primo_embedding}
+E^{(1)}_k=M^{(1)}_k+R^{(1)}_k\in\{0,1,2\}^{64\times\frac H8\times\frac W8},
+\end{equation}
+dove $M^{(1)}_k$ e $R^{(1)}_k$ sono gli spike emessi al passo $k$ dal ramo principale e dalla scorciatoia. È lo stesso principio della scorciatoia deformata di SPEDS~\eqref{eq:speds_formulazione}, con due differenze. Il sottocampionamento avviene con convoluzioni a passo 2 anziché con max-pooling, e la scorciatoia parte dalla prima mappa di feature per attraversare l'intero cambio di scala in un solo salto.
+
+Questo modulo è l'unico della rete a operare a piena risoluzione. Il suo primo strato produce a ogni passo 32 mappe di $128\times128$ posizioni, e il peso che ne deriva nel bilancio complessivo risulterà evidente tra poco.
+
+\subsection{Stadio con Q-K Token Attention}
+\label{subsec:stadio_qkta}
+
+Il primo stadio contiene un unico blocco Transformer, in cui il ruolo dell'attenzione è svolto dalla Q-K Token Attention (QKTA) descritta nella sezione~\ref{sec:qkformer_riferimento}. Per un ingresso di $128\times128$ pixel il blocco opera su $16\times16=256$ token con 64 canali. Query e Key sono ottenute con proiezioni $1\times1$, normalizzazione e neurone LIF, come nell'equazione~\eqref{eq:qk_projections_qkformer}, e i 64 canali sono divisi in 8 teste da 8 canali ciascuna. Per ogni testa $h$ e ogni token $n$, la somma degli spike della Query sui canali della testa attraversa un neurone con soglia $0{,}5$,
+\begin{equation}
+\label{eq:qkta_baseline}
+a_{h,n}=\operatorname{SN}_{0{,}5}\Bigl(\sum_{d\in h}Q_{n,d}\Bigr),
+\qquad
+X'_{n,d}=a_{h,n}\,K_{n,d}\quad\text{per } d\in h,
+\end{equation}
+e la decisione binaria risultante lascia passare o azzera i canali della Key di quella testa per quel token. Rispetto all'equazione~\eqref{eq:qkta_vettore_attenzione} la somma è calcolata separatamente per ogni testa, e ciascun token dispone così di otto decisioni indipendenti. Anche il neurone che le produce possiede uno stato, sicché la selezione di un token dipende dalla storia recente della sua Query oltre che dal passo corrente. L'uscita mascherata attraversa poi una proiezione lineare con normalizzazione e neurone, come nell'equazione~\eqref{eq:qk_proiezione_lineare_uscita}.
+
+Il blocco si completa secondo lo schema delle equazioni~\eqref{eq:blocco_qkformer_qka} e~\eqref{eq:blocco_qkformer_smlp}. L'uscita dell'attenzione viene sommata al suo ingresso, e il risultato attraversa uno spiking MLP con due strati $1\times1$, che espandono i canali da 64 a 128 e li riportano a 64, ciascuno con normalizzazione e neurone e a sua volta accompagnato da un collegamento residuo.
+
+\subsection{Secondo patch embedding e stadio con SSA}
+\label{subsec:stadio_ssa}
+
+Il secondo patch embedding segue lo stesso schema a due rami. Il ramo principale applica una convoluzione $3\times3$ che porta i canali da 64 a 128 e una seconda convoluzione $3\times3$ con passo 2, la scorciatoia una convoluzione $1\times1$ con passo 2, e le due uscite spiking vengono sommate come nell'equazione~\eqref{eq:primo_embedding}. La rappresentazione risultante ha 128 canali a un sedicesimo della risoluzione d'ingresso, cioè 64 token per un ingresso di $128\times128$ pixel.
+
+Il secondo stadio impiega la spiking self-attention (SSA), con Query, Key e Value spiking~\eqref{eq:spiking_qkv} divise in 8 teste, ora da 16 canali. Per ciascuna testa l'uscita dell'attenzione è
+\begin{equation}
+\label{eq:ssa_baseline}
+Y=\operatorname{SN}_{0{,}5}\bigl(s\,Q(K^{\top}V)\bigr),
+\qquad
+s=\frac{1}{\sqrt{16}},
+\end{equation}
+seguita, come nel primo stadio, dalla proiezione di uscita, dal collegamento residuo e da uno spiking MLP che espande i canali da 128 a 256 prima di riportarli a 128. In assenza di softmax il prodotto è associativo, e l'implementazione calcola prima $K^{\top}V$, una matrice $16\times16$ per ogni testa, e poi il suo prodotto con la Query. Il risultato coincide con quello di $(QK^{\top})V$ nell'equazione~\eqref{eq:ssa_spikformer}, ma la matrice $N\times N$ delle relazioni tra token non viene mai costruita, e il costo dell'attenzione cresce linearmente con il numero dei token.
+
+\subsection{Readout}
+\label{subsec:readout_baseline}
+
+Il readout riduce la rappresentazione finale a un vettore, mediandola prima sulle posizioni spaziali e poi sui passi temporali,
+\begin{equation}
+\label{eq:readout_media}
+z=\frac{1}{T\,N_2}\sum_{k=0}^{T-1}\sum_{n=1}^{N_2}Z^{(2)}_{k,n},
+\qquad
+\hat y=W_c\,z+b_c,
+\end{equation}
+dove $Z^{(2)}_{k,n}\in\mathbb R^{128}$ è l'uscita del secondo stadio al passo $k$ e nella posizione $n$, $N_2$ il numero dei suoi token, $W_c$ e $b_c$ i parametri di una testa lineare con un'uscita per classe. Le feature mediate sono quelle del flusso residuo, e non sono quindi binarie. La media temporale comprende tutti i $T$ passi della finestra, inclusi quelli successivi all'ultimo evento. La decisione non dipende così da un istante privilegiato, ma da un riassunto dell'intera sequenza in cui ogni passo pesa allo stesso modo.
+
+\subsection{Bilancio di parametri e stato}
+\label{subsec:bilancio_baseline}
+
+La tabella~\ref{tab:architettura_baseline} riporta, blocco per blocco, le dimensioni delle uscite, i parametri e lo stato persistente, cioè il numero di potenziali di membrana che devono sopravvivere da un passo al successivo. Il totale dei parametri dipende dal numero delle classi e va da $489\,098$ su CIFAR10-DVS a $500\,708$ su DVS-Lip, mentre il backbone ne conta $487\,808$ in tutti i casi. Su THU-EACT-50-CHL, con un ingresso di $346\times260$ pixel, i due stadi operano rispettivamente su $33\times44=1\,452$ e $17\times22=374$ token, e lo stato cresce in proporzione al numero delle posizioni.
+
+\begin{table}[htbp]
+\centering
+\small
+\renewcommand{\arraystretch}{1.2}
+\caption{Struttura della baseline compatta per un ingresso di $128\times128$ pixel. Le uscite sono indicate come canali $\times$ altezza $\times$ larghezza per ciascun passo. Lo stato conta i potenziali di membrana di tutti i neuroni del blocco. I parametri della testa dipendono dal numero $C$ delle classi, e il totale si riferisce a DVS-Lip.}
+\label{tab:architettura_baseline}
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{2.6cm} >{\raggedright\arraybackslash}X c r r@{}}
+\hline
+\textbf{Blocco} & \textbf{Operazioni principali} & \textbf{Uscita} & \textbf{Parametri} & \textbf{Stato} \\
+\hline
+Primo patch embedding & 4 conv.\ $3\times3$ ($2\to32\to64\to64\to64$), scorciatoia $1\times1$ a passo 8 & $64\times16\times16$ & $95\,360$ & $884\,736$ \\
+Stadio 1 & QKTA a 8 teste, MLP $64\to128\to64$ & $64\times16\times16$ & $29\,440$ & $100\,352$ \\
+Secondo patch embedding & conv.\ $3\times3$ ($64\to128$), conv.\ $3\times3$ a passo 2, scorciatoia $1\times1$ a passo 2 & $128\times8\times8$ & $230\,144$ & $49\,152$ \\
+Stadio 2 & SSA a 8 teste, MLP $128\to256\to128$ & $128\times8\times8$ & $132\,864$ & $65\,536$ \\
+Readout e testa & media su spazio e tempo, lineare $128\to C$ & $C$ & $129\,C$ & 0 \\
+\hline
+\textbf{Totale} & DVS-Lip, $C=100$ & & $500\,708$ & $1\,099\,776$ \\
+\hline
+\end{tabularx}
+\end{table}
+
+Parametri e stato si distribuiscono in modo quasi speculare. I due patch embedding contengono circa due terzi dei parametri, e il secondo da solo quasi la metà, mentre i due blocchi di attenzione e i relativi MLP ne occupano poco meno di un terzo. Lo stato è invece dominato dal primo patch embedding, che lavora sulle mappe a risoluzione più alta e ne ospita oltre l'$80\%$, e il solo primo strato ne contiene quasi la metà. Con circa $1{,}1$ milioni di elementi, lo stato supera di oltre il doppio il numero dei parametri. È un primo indizio di quanto, nel regime compatto, capacità e costo si concentrino lontano dall'attenzione, un aspetto che il capitolo successivo esamina nel dettaglio.
+
+\subsection{Differenze rispetto a QKFormer}
+\label{subsec:differenze_qkformer}
+
+Rispetto alla configurazione neuromorfica di QKFormer descritta nella sezione~\ref{sec:qkformer_riferimento}, la baseline conserva la sequenza di un blocco QKTA seguito da un blocco SSA, il patch embedding gerarchico con scorciatoia e la separazione tra memoria neuronale e interazioni all'interno del singolo passo. Cambiano invece la scala e alcuni dettagli costruttivi, riassunti nella tabella~\ref{tab:confronto_qkformer}. Il backbone è organizzato in due stadi anziché tre, la larghezza massima è dimezzata da 256 a 128 canali, e il numero dei parametri scende a circa un terzo. Il sottocampionamento è affidato a convoluzioni con passo, e la sequenza elaborata conta 40 passi, contro i 16 degli esperimenti originali su dati neuromorfici.
+
+Un dettaglio merita una menzione esplicita. Prima di attraversare il proprio neurone, la proiezione di uscita della SSA viene riportata alla disposizione con il tempo come primo asse, così che lo stato di membrana non mescoli mai campioni diversi del batch. È il punto in cui gli autori di QKFormer hanno segnalato un errore nell'implementazione ufficiale~\cite{qkformerImplementationNotice}, e nella baseline il problema non si presenta.
+
+\begin{table}[htbp]
+\centering
+\small
+\renewcommand{\arraystretch}{1.2}
+\caption{Confronto tra la configurazione neuromorfica di QKFormer, secondo la descrizione della sezione~\ref{sec:qkformer_riferimento}, e la baseline compatta.}
+\label{tab:confronto_qkformer}
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{3.8cm} >{\raggedright\arraybackslash}X >{\raggedright\arraybackslash}X@{}}
+\hline
+\textbf{Aspetto} & \textbf{QKFormer, configurazione neuromorfica} & \textbf{Baseline compatta} \\
+\hline
+Stadi e blocchi & tre stadi, blocchi $\{0,1,1\}$ & due stadi, un blocco ciascuno \\
+Attenzione & QKTA, poi SSA & QKTA, poi SSA \\
+Larghezza massima & 256 canali & 128 canali \\
+Parametri & circa $1{,}50$ milioni & da $489\,098$ a $500\,708$ \\
+Sottocampionamento & convoluzione, BN, neurone e max-pooling & convoluzioni a passo 2 \\
+Passi temporali & 16 & 40 \\
+\hline
+\end{tabularx}
+\end{table}
+
+
+% ==============================================================================
+%  Protocollo di addestramento
+% ==============================================================================
+
+\section{Protocollo di addestramento}
+\label{sec:protocollo_addestramento}
+
+\subsection{Ricetta di ottimizzazione}
+\label{subsec:ricetta}
+
+Tutti i modelli di questo lavoro vengono addestrati da zero con la stessa ricetta, riassunta nella tabella~\ref{tab:ricetta_addestramento}. L'ottimizzatore è AdamW~\cite{loshchilov2019adamw}, con un tasso di apprendimento di $3\times10^{-4}$ e un weight decay di $5\times10^{-4}$. Il tasso cresce linearmente nelle prime 4 epoche, a partire da un centesimo del valore nominale, e decresce poi con un profilo cosinusoidale~\cite{loshchilov2017sgdr} fino a $10^{-6}$ alla fine delle 128 epoche previste. La funzione di perdita è l'entropia incrociata con label smoothing pari a $0{,}1$~\cite{szegedy2016rethinking}, la norma globale del gradiente viene limitata a $1$~\cite{pascanu2013difficulty} e i calcoli avvengono in precisione mista automatica~\cite{micikevicius2018mixed}.
+
+L'unica augmentation è un ribaltamento orizzontale con probabilità $0{,}5$ su DVS-Lip. Sugli altri dataset non si applica alcuna trasformazione, e per DVS128 Gesture il ribaltamento sarebbe comunque scorretto, perché scambierebbe tra loro classi direzionali. La ricetta non viene adattata ai singoli modelli né ai singoli dataset. Quando una campagna richiede di modificarla, la modifica viene dichiarata e applicata in modo identico a tutti i modelli del confronto.
+
+\begin{table}[htbp]
+\centering
+\small
+\renewcommand{\arraystretch}{1.2}
+\caption{Ricetta di addestramento comune a tutti i modelli e a tutti i dataset.}
+\label{tab:ricetta_addestramento}
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{3.6cm} >{\raggedright\arraybackslash}X@{}}
+\hline
+\textbf{Componente} & \textbf{Scelta} \\
+\hline
+Ottimizzatore & AdamW, tasso di apprendimento $3\times10^{-4}$, weight decay $5\times10^{-4}$ \\
+Schedule & warmup lineare di 4 epoche da $0{,}01$ volte il valore nominale, poi decadimento cosinusoidale fino a $10^{-6}$ \\
+Durata & 128 epoche \\
+Funzione di perdita & entropia incrociata con label smoothing $0{,}1$ \\
+Stabilizzazione & limite di $1$ sulla norma globale del gradiente \\
+Precisione & precisione mista automatica su GPU \\
+Batch effettivo & 32 campioni, ottenuti per accumulo su più microbatch \\
+Augmentation & ribaltamento orizzontale con probabilità $0{,}5$, solo su DVS-Lip \\
+Seed & 42 per lo screening, 43 e 44 per le repliche \\
+Selezione del checkpoint & epoca con la massima Macro-F1 sulla validazione di sviluppo \\
+\hline
+\end{tabularx}
+\end{table}
+
+\subsection{Microbatch e batch normalization}
+\label{subsec:microbatch_bn}
+
+Il batch effettivo di 32 campioni si ottiene accumulando i gradienti di più microbatch, la cui dimensione dipende dalla memoria richiesta da ciascun dataset. Negli addestramenti con la rappresentazione a finestra fissa si accumulano 2 microbatch da 16 campioni su DVS-Lip e CIFAR10-DVS, 4 da 8 su DVS128 Gesture e 8 da 4 su THU-EACT-50-CHL, le cui mappe sono le più grandi. Le campagne successive dichiarano il proprio frazionamento, sempre identico tra i modelli di uno stesso confronto.
+
+L'accumulo rende equivalente il gradiente delle componenti lineari, ma non il comportamento della batch normalization~\cite{ioffe2015batch}, che durante l'addestramento normalizza con le statistiche del solo microbatch corrente. Poiché gli operatori sono applicati passo per passo con il tempo fuso nella dimensione del batch, quelle statistiche aggregano tutti i passi e tutti i campioni del microbatch, come avviene comunemente nelle SNN addestrate direttamente~\cite{zheng2021going}. Ne discendono due conseguenze. Quattro microbatch da 8 campioni non equivalgono a un batch da 32, e il frazionamento diventa perciò parte del protocollo, da mantenere fisso in ogni confronto. Inoltre, durante l'addestramento ciascun passo viene normalizzato con statistiche che dipendono anche dai passi successivi, sicché la rete non è strettamente causale in questa fase, pur essendolo ogni suo operatore. In inferenza la normalizzazione usa statistiche accumulate e fisse, e le feature di ogni passo tornano a dipendere soltanto dai passi precedenti.
+
+\subsection{Verifiche preliminari}
+\label{subsec:verifiche_preliminari}
+
+Nelle campagne multi-dataset e in quelle successive, ogni nuova configurazione affronta una serie di verifiche automatiche prima dell'addestramento completo. Un audit delle partizioni di sviluppo controlla la conservazione degli eventi e il rispetto dei limiti di conteggio nella rappresentazione scelta. Un passaggio in avanti e all'indietro, in singola precisione e in precisione mista, verifica le forme dei tensori, la finitezza di uscite e gradienti e la compatibilità con il microbatch configurato.
+
+Segue un test di sovradattamento controllato. Il modello viene addestrato, senza augmentation né precisione mista, su quattro campioni per ciascuna di al più 16 classi, e deve mantenere per cinque epoche consecutive un'accuratezza superiore al $95\%$ su quello stesso sottoinsieme, con una loss inferiore a $1{,}5$, entro un massimo di 500 epoche e $1\,000$ passi di ottimizzazione. Il test non dice nulla sulla capacità di generalizzare, ma dimostra che la pipeline è in grado di apprendere e intercetta, a un costo trascurabile, errori che altrimenti emergerebbero soltanto al termine di un addestramento completo. Superate le verifiche, l'addestramento vero e proprio riparte da pesi nuovi.
+
+
+% ==============================================================================
+%  Metriche e valutazione
+% ==============================================================================
+
+\section{Metriche e valutazione}
+\label{sec:metriche_valutazione}
+
+\subsection{Macro-F1 e metriche complementari}
+\label{subsec:macro_f1}
+
+La metrica principale è la Macro-F1, media non pesata degli F1 delle singole classi~\cite{sokolova2009systematic}. Per una classe $c$, indicati con $\mathrm{TP}_c$, $\mathrm{FP}_c$ e $\mathrm{FN}_c$ i veri positivi, i falsi positivi e i falsi negativi,
+\begin{equation}
+\label{eq:f1_classe}
+P_c=\frac{\mathrm{TP}_c}{\mathrm{TP}_c+\mathrm{FP}_c},
+\qquad
+R_c=\frac{\mathrm{TP}_c}{\mathrm{TP}_c+\mathrm{FN}_c},
+\qquad
+\mathrm{F1}_c=\frac{2P_cR_c}{P_c+R_c},
+\end{equation}
+e la metrica è la media sulle $C$ classi,
+\begin{equation}
+\label{eq:macro_f1}
+\text{Macro-F1}=\frac{1}{C}\sum_{c=1}^{C}\mathrm{F1}_c .
+\end{equation}
+A differenza dell'accuratezza, la Macro-F1 attribuisce a tutte le classi lo stesso peso, indipendentemente dalla loro numerosità, e penalizza un modello che raggiunga un buon risultato complessivo trascurando alcune classi.\footnote{Su THU-EACT-50-CHL la media è calcolata su tutte le 50 classi della testa di classificazione, anche se quattro di esse compaiono soltanto in soggetti del training e mancano sia nella validazione di sviluppo sia nel test ufficiale. Per queste classi l'F1 è nullo per costruzione, e il valore massimo raggiungibile della Macro-F1 è pari al $92\%$. Il vincolo è identico per tutti i modelli e non altera i confronti, ma va tenuto presente nella lettura dei valori assoluti.} Accanto ad essa si riportano l'accuratezza top-1 e, su DVS-Lip, le accuratezze Acc1 e Acc2 dei due gruppi di parole descritti nella sezione~\ref{subsec:dvslip}.
+
+\subsection{Selezione del checkpoint e incertezza dei confronti}
+\label{subsec:selezione_incertezza}
+
+Ogni modello viene valutato sulla validazione di sviluppo al termine di ciascuna epoca, e il checkpoint conservato è quello con la Macro-F1 più alta. Selezione e misura avvengono quindi sugli stessi dati, e il valore riportato è una stima ottimistica della prestazione su dati nuovi, tanto più quanto più la curva di validazione oscilla da un'epoca all'altra. Per questo, a partire dalle campagne multi-dataset, il riepilogo di ogni addestramento registra anche media e deviazione standard della Macro-F1 nelle ultime 16 epoche, un indicatore di stabilità meno esposto alla scelta del massimo.
+
+Quando due modelli vengono confrontati sulla stessa validazione, le loro predizioni sono appaiate campione per campione, e questo consente due strumenti complementari. Il test esatto di McNemar considera soltanto i campioni su cui i due modelli discordano e verifica se gli errori corretti dall'uno e quelli introdotti dall'altro siano sbilanciati~\cite{mcnemar1947note,dietterich1998approximate}. Il bootstrap appaiato ricampiona con reinserimento i campioni della validazione, ricalcola su ciascuna delle $2\,000$ repliche la differenza della metrica tra i due modelli e ne ricava un intervallo di confidenza al $95\%$~\cite{efron1993bootstrap}. % DA VERIFICARE: implementazione del bootstrap sulla differenza di Macro-F1 (notebook dei risultati).
+I valori di $p$ non sono corretti per i confronti multipli, e vanno letti come indicazioni piuttosto che come verdetti.
+
+Entrambi gli strumenti quantificano l'incertezza dovuta alla dimensione finita della validazione, a checkpoint fissati. Nessuno dei due misura la variabilità dell'addestramento, cioè quanto cambierebbe il risultato ripetendo l'addestramento con un seed diverso, una fonte di variazione che può essere dello stesso ordine delle differenze tra i modelli confrontati~\cite{bouthillier2021accounting}. Per questo medie e deviazioni standard vengono riportate soltanto quando esistono repliche indipendenti della stessa configurazione, e le differenze ottenute con un solo seed vengono trattate come indicazioni esplorative.
+
+\subsection{Valutazione sui prefissi}
+\label{subsec:prefissi}
+
+Su DVS-Lip e DVS128 Gesture la valutazione comprende anche una misura di come la decisione si formi nel tempo. Lo stesso checkpoint viene valutato su prefissi della sequenza, facendo elaborare alla rete soltanto i primi bin e calcolando il readout sui soli passi osservati. I prefissi sono definiti in tempo assoluto, a $250$, $500$, $1\,000$, $1\,500$ e $2\,000\,\mathrm{ms}$ su DVS-Lip e a $2$, $5$, $10$, $15$ e $20\,\mathrm{s}$ su DVS128 Gesture, oppure come frazioni della durata di ciascun campione. Un indice sintetico, indicato come PrefixAUC, integra con la regola dei trapezi l'accuratezza sui prefissi assoluti e la normalizza sull'intervallo coperto, che su DVS-Lip va da $250$ a $2\,000\,\mathrm{ms}$.
+
+I prefissi relativi richiedono di conoscere in anticipo la fine della registrazione, e non corrispondono quindi ad alcuna politica di decisione anticipata realizzabile. Entrambe le misure sono diagnostiche. Non intervengono nella selezione dei modelli e non autorizzano di per sé a ridurre la finestra di ingresso, perché un modello addestrato su sequenze complete non è stato ottimizzato per decidere su sequenze troncate.
+
+\subsection{Uso delle partizioni riservate}
+\label{subsec:partizioni_riservate}
+
+Tutte le metriche riportate nei capitoli successivi sono misurate sulla validazione di sviluppo, salvo indicazione esplicita. Le partizioni riservate, cioè i test ufficiali di DVS-Lip, DVS128 Gesture e THU-EACT-50-CHL e l'holdout di CIFAR10-DVS, restano escluse dallo sviluppo, dalla selezione dei checkpoint e dalla caratterizzazione computazionale. L'unica eccezione riguarda un insieme di analisi diagnostiche, presentate separatamente, in cui alcuni checkpoint già selezionati su DVS-Lip e THU-EACT-50-CHL sono stati valutati in sola inferenza sul test ufficiale, senza alcun addestramento né selezione basati su quei dati. Quei risultati descrivono il comportamento di modelli già scelti e non vengono utilizzati per sceglierne altri. % TODO: \ref al capitolo dell'analisi trasversale (diagnostica sul test ufficiale).
+
+\begin{figure}[htbp]
+    \centering
+    % \includegraphics[width=0.9\textwidth]{images/cap2/placeholder_cap2_fig4.pdf}
+    \rule{0.85\textwidth}{4.5cm} % Box segnaposto per Fig. 2.4
+    \caption{Uso delle partizioni nel protocollo sperimentale. Addestramento e selezione del checkpoint impiegano esclusivamente le partizioni di sviluppo, ricavate dal training ufficiale. La partizione riservata resta esclusa dallo sviluppo e viene impiegata soltanto per analisi diagnostiche a posteriori su checkpoint già selezionati.}
+    \label{fig:uso_partizioni}
+\end{figure}
+
+
+% ==============================================================================
+%  Disegno dei controlli sperimentali
+% ==============================================================================
+
+\section{Disegno dei controlli sperimentali}
+\label{sec:disegno_controlli}
+
+Il principio che governa i confronti di questo lavoro è semplice da enunciare. Due modelli confrontati differiscono per un solo elemento, e tutto il resto, dati, partizione, rappresentazione dell'input, ricetta, seed, frazionamento in microbatch e regola di selezione, resta identico. Quando l'oggetto dell'esperimento è l'input, è l'architettura a essere tenuta fissa. Una differenza di prestazione può allora essere attribuita all'elemento modificato, entro i limiti di incertezza discussi nella sezione precedente. Lo stesso modulo, però, può essere interrogato in modi diversi, che rispondono a domande diverse (figura~\ref{fig:tipologie_controllo}).
+
+Un'ablazione riaddestrata rimuove o sostituisce il modulo e addestra il modello da zero con la stessa ricetta. Misura che cosa riesca a ottenere l'architettura senza quel componente, ed è la sola prova che il componente serva davvero a raggiungere un certo risultato.
+
+Un intervento sul checkpoint modifica invece un modello già addestrato soltanto in inferenza, lasciando invariati pesi e statistiche di normalizzazione. Rientrano in questa categoria la disattivazione di un ramo, l'eliminazione di singoli ritardi in un modulo temporale, la permutazione dell'ordine dei passi in ingresso e la valutazione sui prefissi. Un intervento di questo tipo misura quanto la soluzione appresa dipenda dal componente, non se il componente sia necessario. Una rete addestrata con un modulo può essersi adattata alla sua presenza e degradare vistosamente quando lo si rimuove, anche se un'architettura che ne è priva, addestrata da zero, avrebbe raggiunto un risultato analogo. Il ruolo dell'attenzione nel secondo stadio viene esaminato proprio combinando le due prospettive. Un test di necessità disattiva la SSA in inferenza sul checkpoint addestrato, lasciando attivi collegamento residuo e MLP, mentre un test di sostituibilità la rimpiazza con un mixer spaziale locale di capacità comparabile e addestra il modello da zero.
+
+Un controllo di capacità, infine, separa l'effetto di un operatore da quello delle risorse che aggiunge. Ogni nuovo modulo porta con sé parametri e operazioni, e un miglioramento potrebbe dipendere semplicemente da questi. Il confronto con alternative di costo comparabile ma prive della struttura in esame, come un allargamento uniforme della rete, un percettrone multistrato con lo stesso numero di parametri o una variante che conserva la forma del modulo eliminandone la proprietà ipotizzata, permette di attribuire il guadagno alla struttura e non alla quantità.
+
+\begin{figure}[htbp]
+    \centering
+    % \includegraphics[width=0.95\textwidth]{images/cap2/placeholder_cap2_fig5.pdf}
+    \rule{0.9\textwidth}{4.8cm} % Box segnaposto per Fig. 2.5
+    \caption{Tipologie di controllo sperimentale. L'ablazione riaddestrata confronta due modelli addestrati da zero che differiscono per un solo componente. L'intervento sul checkpoint modifica in sola inferenza un modello già addestrato. Il controllo di capacità sostituisce il componente con un'alternativa di costo comparabile ma priva della struttura in esame.}
+    \label{fig:tipologie_controllo}
+\end{figure}
+
+Perché il confronto sia davvero appaiato occorre anche controllare l'inizializzazione. Nelle varianti che aggiungono un modulo a un'architettura di riferimento, i parametri del nuovo componente vengono generati in un flusso pseudo-casuale separato, oppure i pesi comuni vengono copiati dalla rete di riferimento costruita con lo stesso seed. In questo modo, a parità di seed, i pesi condivisi partono dagli stessi valori e la sequenza dei dati non viene perturbata dalla costruzione del nuovo modulo. L'accorgimento non rende identiche le traiettorie di addestramento, che divergono non appena il modulo modifica i gradienti, ma elimina una fonte di variabilità estranea al confronto.
+
+L'esplorazione procede con un solo seed, il 42, che permette di esaminare molte varianti a costo contenuto. Le configurazioni destinate a diventare un riferimento vengono replicate con i seed 43 e 44, e solo per queste si riportano medie e deviazioni standard. Nei capitoli successivi i risultati di screening e quelli confermati restano sempre distinti.
+
+
+% ==============================================================================
+%  Caratterizzazione computazionale
+% ==============================================================================
+
+\section{Caratterizzazione computazionale}
+\label{sec:caratterizzazione_computazionale}
+
+Il costo di ciascun modello viene caratterizzato in inferenza sul checkpoint selezionato, usando 64 campioni della validazione di sviluppo scelti in modo deterministico alternando le classi, gli stessi per tutti i modelli di un dataset. Ogni profilo è legato al proprio checkpoint attraverso un'impronta crittografica e non viene mai trasferito da un modello a un altro. Le grandezze raccolte riprendono quelle introdotte nella sezione~\ref{sec:efficienza_neuromorfica_vincoli} e sono riassunte nella tabella~\ref{tab:contatori_profilo}.
+
+\begin{table}[htbp]
+\centering
+\small
+\renewcommand{\arraystretch}{1.2}
+\caption{Grandezze raccolte nella caratterizzazione computazionale di ciascun checkpoint.}
+\label{tab:contatori_profilo}
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{3.4cm} >{\raggedright\arraybackslash}X@{}}
+\hline
+\textbf{Grandezza} & \textbf{Che cosa conta} \\
+\hline
+Parametri & pesi addestrabili, testa inclusa, e occupazione in bit alla precisione di esecuzione \\
+Stato persistente & potenziali di membrana e buffer temporali che devono sopravvivere da un passo al successivo \\
+MAC & moltiplicazioni e accumuli con operandi non binari, come i conteggi in ingresso, le somme residue e le correnti dei moduli temporali \\
+AC potenziali & accumuli con ingresso binario, contati come se ogni possibile spike fosse presente \\
+AC ad attività & accumuli pesati per la densità di spike osservata, nell'ipotesi di un salto ideale degli zeri \\
+SOP & AC potenziali più le operazioni dell'attenzione \\
+Firing rate & frazione di spike emessi da ciascuno strato sui campioni profilati \\
+\hline
+\end{tabularx}
+\end{table}
+
+La distinzione tra MAC e AC segue il tipo di operando, non il tipo di strato. Uno strato che legge spike binari esegue accumuli, mentre lo stesso strato applicato a conteggi o a somme residue esegue moltiplicazioni vere e proprie. Per questo la proprietà dei collegamenti residui descritta nella sezione~\ref{subsec:neurone_convenzioni} pesa sul bilancio, perché una parte delle proiezioni della rete riceve valori interi e non binari.
+
+Per riassumere i conteggi in un'unica grandezza si adotta la stima aritmetica dell'equazione~\eqref{eq:energia_snn_semplificata}, già impiegata da QKFormer, con i costi di riferimento per operazioni in virgola mobile a 32 bit in tecnologia a $45\,\mathrm{nm}$ riportati da Horowitz~\cite{horowitz2014energy}, cioè $4{,}6\,\mathrm{pJ}$ per una MAC, $0{,}9\,\mathrm{pJ}$ per un'addizione e $3{,}7\,\mathrm{pJ}$ per una moltiplicazione. La stima viene calcolata in due varianti, una densa, che conta tutti gli accumuli potenziali, e una pesata per l'attività osservata. Restano escluse per costruzione molte voci rilevanti, dagli accessi in memoria al routing, dalla logica di controllo alle correnti di dispersione, dall'aggiornamento dei neuroni alle non linearità e alle divisioni di normalizzazione. Il risultato è dunque una proxy parziale e comparativa del solo costo aritmetico, utile per confrontare architetture a parità di input, e in nessun caso una misura dell'energia consumata. Per la stessa ragione i tempi di esecuzione su GPU non vengono usati come indicatore di efficienza.
+
+Lo stato persistente viene riportato sempre accanto ai parametri. Come si è visto per la baseline, le due grandezze possono differire di un fattore superiore a due e dipendono da scelte architetturali diverse, e un modulo che aggiunge pochi parametri può richiedere un buffer temporale molto più grande.
+
+
+% ==============================================================================
+%  Sintesi
+% ==============================================================================
+
+\section{Sintesi del protocollo di riferimento}
+\label{sec:sintesi_protocollo}
+
+La tabella~\ref{tab:sintesi_protocollo} raccoglie gli elementi del protocollo che restano fissi nei capitoli successivi, salvo quando sono essi stessi l'oggetto dell'esperimento. Ogni risultato citato corrisponde a un addestramento identificato univocamente, di cui sono conservati la configurazione completa, l'ambiente software, la versione del codice con l'indicazione di eventuali modifiche non registrate, l'impronta del checkpoint selezionato, la storia dell'addestramento e le metriche di validazione. I nomi con cui modelli e varianti compaiono nel testo sono descrittivi e non coincidono con gli identificatori interni degli esperimenti. La corrispondenza tra i due è riportata in appendice, così che ogni numero possa essere ricondotto alla propria esecuzione. % TODO: \ref all'appendice di riproducibilità
+
+\begin{table}[htbp]
+\centering
+\small
+\renewcommand{\arraystretch}{1.2}
+\caption{Protocollo di riferimento della sperimentazione.}
+\label{tab:sintesi_protocollo}
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{3.6cm} >{\raggedright\arraybackslash}X@{}}
+\hline
+\textbf{Elemento} & \textbf{Riferimento} \\
+\hline
+Dataset & DVS-Lip, DVS128 Gesture, CIFAR10-DVS, THU-EACT-50-CHL \\
+Partizioni & validazione di sviluppo ricavata dal training ufficiale, partizioni riservate escluse dallo sviluppo \\
+Input & frame di conteggio ON e OFF a finestra fissa, $T=40$, durata dei bin specifica per dataset \\
+Architettura & baseline compatta a due stadi, QKTA e SSA, circa $0{,}5$ milioni di parametri \\
+Neuroni & LIF con $\tau_d=2$, $V_{\mathrm{th}}=1$, soft reset, surrogata sigmoidale con $\alpha=4$ \\
+Readout & media su spazio e tempo, testa lineare \\
+Ricetta & AdamW, 128 epoche, batch effettivo 32, frazionamento in microbatch dichiarato \\
+Metrica & Macro-F1 sulla validazione di sviluppo, con accuratezza e, su DVS-Lip, Acc1 e Acc2 \\
+Seed & 42 per lo screening, 43 e 44 per le repliche \\
+Costo & parametri, stato persistente, MAC, AC, SOP, firing rate e proxy aritmetica parziale \\
+\hline
+\end{tabularx}
+\end{table}
+
+Con il riferimento così fissato, il capitolo successivo può affrontare la prima delle tre domande sperimentali. Si tratta di capire dove spendere un budget di capacità tanto ridotto, partendo dall'osservazione che, nella baseline, la parte più costosa della rete non è quella che il nome dell'architettura metterebbe in primo piano.

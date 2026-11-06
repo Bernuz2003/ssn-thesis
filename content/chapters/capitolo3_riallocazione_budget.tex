@@ -1,0 +1,29 @@
+\chapter{Riallocazione del budget nella baseline compatta}
+\label{chap:riallocazione_budget}
+
+% ==============================================================================
+%  CAPITOLO IN ATTESA DI RISULTATI (stato al 2026-11-04)
+%
+%  Le coorti storiche passano da TCAP con tre ritardi a DWC3 con quattro ritardi
+%  in un unico passo, mescolando due interventi. Prima della stesura si
+%  rieseguono, con ricetta, input (finestra fissa) e seed invariati:
+%    1. pyramidal embedding + TCAP con 4 ritardi [1,2,4,8] e Token-QK originale;
+%    2. lo stesso modello con DWC3 al posto della Token-QK (= C0).
+%  Così ogni passo da B a C0 modifica un solo elemento.
+%
+%  La configurazione C0 (pyramidal embedding + depthwise spatial mixer +
+%  CMLCM con ritardi [1,2,4,8]) resta invariata ed è usata come riferimento
+%  nei Capitoli 4 e 5.
+% ==============================================================================
+
+\noindent\textit{Questo capitolo sarà redatto al termine delle riesecuzioni che isolano i singoli interventi architetturali. La traccia seguente ne definisce i contenuti.}
+
+\begin{itemize}
+    \item \textbf{Diagnosi della baseline.} Distribuzione di operazioni e stato tra i blocchi, controlli di capacità a larghezza 192 e 256, rimozione della memoria tra passi e momento del readout.
+    \item \textbf{Pyramidal spiking patch embedding.} Ridistribuzione del budget nel primo patch embedding.
+    \item \textbf{Causal multi-lag channel mixer.} Formulazione, punto di inserimento e rimozione dei ritardi in inferenza come diagnostica di co-adattamento, con quattro ritardi fin dall'inizio.
+    \item \textbf{Depthwise spatial mixer.} Sostituzione della Q-K Token Attention a parità di ritardi, controllo con ritardi apprendibili.
+    \item \textbf{Stabilità e trasferimento.} Repliche con tre seed per la baseline e per la configurazione finale, confronto sui quattro dataset, controlli di larghezza.
+    \item \textbf{Ruolo dell'attenzione.} Test di necessità e di sostituibilità della SSA.
+    \item \textbf{Uso condizionale dei ritardi.} Variante con gate di contenuto, controllo statico riaddestrato e trasferimento tra dataset.
+\end{itemize}

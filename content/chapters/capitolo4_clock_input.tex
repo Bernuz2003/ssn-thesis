@@ -1,0 +1,260 @@
+\chapter{Il clock dell'input come variabile sperimentale}
+\label{chap:clock_input}
+
+% Fonti verificate il 2026-11-04 sul repository temporal-event-spiking-research (commit 5a03fec).
+% Risultati di addestramento: summary.json dei run C0 con encoding E0, FEC e VC
+%   (dvslip: E0_C0_M__20260914_093427_434930__seed42 [+seed43/44], FEC_C0_M__20261011_121941_300598__seed42,
+%    VC_C0_M__20261023_195514_528865__seed42 [32x1] e VC_C0_M__20261023_103414_923006__seed42 [8x4];
+%    dvsgesture: E0_C0_M__20261009_235016_816383__seed42, E0 seed43, FEC_C0_M__20261011_134033_534484__seed42,
+%    VC_C0_M__20261025_135526_186863__seed42, VC seed44, VC_C0_M--settling-500ms[-tau-4p908];
+%    cifar10dvs: E0 seed42/43/44, FEC_C0_M__20261011_142919_379011__seed42, VC seed42 [32x1 e 16x2], VC seed43/44;
+%    thu_eact_50_chl: E0 seed42/45, VC_C0_M__20261024_025125_082871__seed42; FEC: overfit gate fallito).
+% Diagnostica appaiata E0/VC in FP32: artifacts/reports/c0_e0_vc/<dataset>/{E0,VC}/clean*.
+% Rotazioni FEC: artifacts/reports/dvsgesture/mechanistic/dvsgesture_c0_fixed_event_count__*/record.npz.
+% Figure generate dagli script in scratchpad/cap4 (fig_*.py), immagini in images/cap4/.
+
+Nei capitoli precedenti l'ingresso della rete è rimasto fermo. La rappresentazione a finestra fissa, introdotta insieme alla baseline, ha fatto da sfondo a ogni modifica architetturale, e proprio per questo nessuna di quelle modifiche poteva dire qualcosa sull'ingresso stesso. Questo capitolo inverte i ruoli. L'architettura viene congelata, e a cambiare è soltanto il modo in cui il flusso di eventi viene suddiviso in passi.
+
+La questione può sembrare un dettaglio di preprocessing, ma tocca il cuore del problema. La rete conta il tempo in passi. I neuroni perdono una frazione fissa del proprio potenziale a ogni passo, il mixer temporale guarda indietro di un numero fisso di passi, il readout media sui passi. Che cosa sia un passo, però, lo decide il clock dell'input, e con esso si decide che cosa la rete possa davvero ricordare e confrontare. Le pagine che seguono mostrano che questa scelta pesa sulle prestazioni in misura paragonabile a una modifica dell'architettura, e che i suoi effetti cambiano da un dataset all'altro in modi che la sola accuratezza finale non lascerebbe intuire.
+
+Per tutto il capitolo la rete è il modello di riferimento con cui si chiude il capitolo~\ref{chap:riallocazione_budget}. Rispetto alla baseline compatta, il primo patch embedding ha una struttura piramidale, la Q-K Token Attention del primo stadio è sostituita da un mixer spaziale depthwise $3\times3$, e in entrambi i patch embedding un mixer causale a più ritardi (\emph{causal multi-lag channel mixer}, CMLCM) somma alla corrente $z_t$ di uno strato combinazioni lineari tra canali delle correnti di alcuni passi precedenti,
+\begin{equation}
+\label{eq:cmlcm_richiamo}
+u_t=z_t+\sum_{k=1}^{4}W_k\,z_{t-d_k},
+\qquad
+(d_1,d_2,d_3,d_4)=(1,2,4,8).
+\end{equation}
+Il secondo stadio conserva la SSA, il readout resta la media su spazio e tempo, e il numero dei parametri rimane attorno al mezzo milione. Di questa architettura interessa qui un solo aspetto. I ritardi $d_k$, come la costante $\tau_d$ dei neuroni, sono espressi in passi, e il loro significato fisico dipende interamente dal clock.
+
+
+% ==============================================================================
+%  I limiti della finestra fissa
+% ==============================================================================
+
+\section{I limiti della finestra fissa}
+\label{sec:limiti_finestra_fissa}
+
+La rappresentazione a finestra fissa ha due pregi evidenti, la semplicità e la confrontabilità. Ogni campione produce esattamente 40 passi, ogni passo corrisponde alla stessa durata fisica, e il modello può essere addestrato a batch senza alcun mascheramento. La stessa rigidità che rende comodo questo schema produce però tre effetti collaterali di natura molto diversa. Il primo riguarda ciò che accade dopo la fine della registrazione, il secondo le registrazioni più lunghe della finestra, il terzo ciò che si perde dentro un singolo bin quando il movimento è più rapido del clock.
+
+\subsection{Una coda che non è silenzio}
+\label{subsec:coda_vuota}
+
+Ogni registrazione più breve della finestra lascia dopo l'ultimo evento una sequenza di bin vuoti, già incontrata nella sezione~\ref{sec:input_baseline}. Misurata sul modello di riferimento, questa coda occupa in mediana il $45\%$ dei passi su DVS-Lip, circa un terzo su CIFAR10-DVS e circa due terzi su DVS128 Gesture e THU-EACT-50-CHL (figura~\ref{fig:coda_vuota}a). In un campione tipico di DVS128 Gesture la rete trascorre più tempo ad aspettare che a osservare.
+
+Aspettare, però, non significa restare inerti. I potenziali di membrana non si azzerano quando gli eventi finiscono, il mixer temporale continua a restituire le correnti di alcuni passi prima e i collegamenti residui propagano tutto ciò che resta. La figura~\ref{fig:coda_vuota}b dà la misura del fenomeno. Le operazioni dense, che si ripetono a ogni passo indipendentemente dall'attività, seguono esattamente la quota dei passi vuoti. Ma anche le operazioni sinaptiche innescate dagli spike restano consistenti, tra il $10\%$ e il $28\%$ del totale a seconda del dataset. Una parte non trascurabile del calcolo viene quindi spesa elaborando il silenzio.
+
+\begin{figure}[tbp]
+    \centering
+    \includegraphics[width=\textwidth]{images/cap4/cap4_coda_vuota.pdf}
+    \caption{Coda vuota della rappresentazione a finestra fissa per il modello di riferimento, sulla validazione di sviluppo. (a)~Frazione dei 40 passi successivi al bin che contiene l'ultimo evento, per ciascun campione, con mediana e intervallo interquartile. (b)~Quota dei passi, e quindi delle MAC dense, e quota delle operazioni sinaptiche spese dopo l'ultimo evento, sommate sull'intera validazione. Checkpoint con seed 42, valutati in singola precisione.}
+    \label{fig:coda_vuota}
+\end{figure}
+
+Resta da capire se quel calcolo serva a qualcosa, e un intervento sul checkpoint permette di rispondere almeno in parte. Lo stesso modello, addestrato con la finestra fissa, viene valutato interrompendo l'elaborazione al bin che contiene l'ultimo evento e calcolando il readout sui soli passi osservati. Se la coda fosse un riempitivo innocuo, l'accuratezza non dovrebbe cambiare. Accade invece l'opposto (figura~\ref{fig:dipendenza_coda}). Su DVS-Lip l'accuratezza crolla di $17{,}2$ punti e su THU-EACT-50-CHL di $14{,}8$, mentre su DVS128 Gesture e CIFAR10-DVS la perdita si ferma a $2{,}3$ e $3{,}4$ punti.
+
+\begin{figure}[tbp]
+    \centering
+    \includegraphics[width=\textwidth]{images/cap4/cap4_dipendenza_coda.pdf}
+    \caption{Dipendenza dalla coda appresa dal modello addestrato con la finestra fissa. Ogni riga confronta l'accuratezza dello stesso checkpoint quando elabora l'intera finestra e quando l'elaborazione si interrompe al bin che contiene l'ultimo evento. A destra la differenza in punti percentuali. Seed 42, validazione di sviluppo, valutazione in singola precisione.}
+    \label{fig:dipendenza_coda}
+\end{figure}
+
+Il modello ha dunque imparato a usare la coda. Le sue decisioni continuano a maturare dopo la fine dell'ingresso, mentre la dinamica interna si assesta e il readout accumula evidenza. Va però ricordato che si tratta di un intervento sul checkpoint, che misura una dipendenza appresa e non la necessità della coda (sezione~\ref{sec:disegno_controlli}). Interrompere l'elaborazione cambia anche il denominatore della media del readout, e una rete addestrata fin dall'inizio senza coda potrebbe imparare a decidere in modo diverso. È esattamente ciò che verifica la rappresentazione a lunghezza variabile introdotta nella sezione~\ref{sec:tre_clock}.
+
+\subsection{Registrazioni più lunghe della finestra}
+\label{subsec:troncamento}
+
+Il problema opposto, quello delle registrazioni che eccedono la finestra, riguarda soltanto THU-EACT-50-CHL, dove la finestra di $8\,\mathrm{s}$ tronca due registrazioni della validazione (sezione~\ref{sec:input_baseline}). Anche nell'ipotesi più favorevole, in cui la registrazione completa bastasse a correggere entrambe le predizioni, il guadagno non supererebbe mezzo punto di accuratezza. Il troncamento esiste e va dichiarato, ma non può spiegare le differenze discusse più avanti.
+
+\subsection{Quando il movimento è più rapido del clock}
+\label{subsec:aliasing}
+
+Il terzo effetto è il più sottile, e lo si osserva con chiarezza sulle rotazioni di DVS128 Gesture. Quattro classi del dataset descrivono un braccio che ruota, il destro o il sinistro, in senso orario o antiorario, e si distinguono soltanto per il verso. Con bin da $500\,\mathrm{ms}$ e una rotazione che compie un giro in poco più di un secondo, tra il centro di un bin e quello del successivo il braccio percorre circa mezzo giro. A quel punto due posizioni consecutive sono compatibili tanto con mezzo giro in un verso quanto con mezzo giro nell'altro, e il verso diventa ambiguo. È la ragione per cui una ruota ripresa con troppi pochi fotogrammi al secondo sembra girare al contrario, un caso di aliasing temporale che compare quando il campionamento non è almeno due volte più rapido del moto osservato~\cite{shannon1949communication}.
+
+La figura~\ref{fig:aliasing} rende il fenomeno concreto su una registrazione della validazione, una rotazione antioraria del braccio sinistro. La posizione del braccio è approssimata dal baricentro degli eventi di ciascun bin, e l'angolo attorno al centro della scena ne ricostruisce la rotazione. Con bin da $20\,\mathrm{ms}$ la traccia di riferimento compie quasi sette giri sempre nello stesso verso. Con i bin da $500\,\mathrm{ms}$ della finestra fissa, invece, la metà degli intervalli tra bin consecutivi raggiunge o supera il mezzo giro, e la rotazione ricostruita procede nel verso opposto. Le due rappresentazioni alternative della sezione~\ref{sec:tre_clock}, che usano passi più brevi, restano quasi sempre sotto la soglia. Il modello addestrato con la finestra fissa classifica proprio questo campione come una rotazione oraria dello stesso braccio.
+
+\begin{figure}[tbp]
+    \centering
+    \includegraphics[width=\textwidth]{images/cap4/cap4_aliasing.pdf}
+    \caption{Aliasing temporale su una rotazione antioraria del braccio sinistro di DVS128 Gesture (validazione di sviluppo). (a)~Giri ricostruiti dall'angolo del baricentro degli eventi di ciascun passo, per una traccia di riferimento a $20\,\mathrm{ms}$ e per i tre clock. (b)~Variazione angolare della traccia di riferimento tra i centri di passi consecutivi. In alto, il numero di intervalli che raggiungono o superano il mezzo giro. Il baricentro è un'approssimazione della posizione del braccio e il campione è stato scelto a posteriori, sicché la figura illustra il meccanismo senza stimarne la frequenza.}
+    \label{fig:aliasing}
+\end{figure}
+
+Il caso è stato scelto a posteriori, e il baricentro è un'approssimazione grossolana della posizione. Inoltre ogni bin accumula conteggi lungo tutta la sua durata, anziché campionare una singola posizione, e l'esempio non dimostra che i tensori delle due classi siano indistinguibili. Il comportamento dei modelli sull'intera validazione va però nella stessa direzione (figura~\ref{fig:rotazioni}). Sugli 88 campioni di rotazione il modello addestrato con la finestra fissa commette 13 errori, e 11 di questi scambiano il verso a parità di braccio. Con le due rappresentazioni a passo più breve le inversioni scompaiono del tutto. Su questo dataset, circa un terzo di tutti gli errori della finestra fissa è un errore di verso.
+
+\begin{figure}[tbp]
+    \centering
+    \includegraphics[width=\textwidth]{images/cap4/cap4_rotazioni.pdf}
+    \caption{Matrici di confusione ristrette alle quattro classi di rotazione di DVS128 Gesture, per il modello di riferimento addestrato con i tre clock (validazione di sviluppo, seed 42). Le righe indicano la classe vera, le colonne la classe predetta, con D e S per il braccio destro e sinistro e le frecce per il verso. Le celle tratteggiate corrispondono alle inversioni di verso a parità di braccio, la colonna \emph{altro} alle predizioni di classi diverse dalle rotazioni.}
+    \label{fig:rotazioni}
+\end{figure}
+
+
+% ==============================================================================
+%  Tre clock a confronto
+% ==============================================================================
+
+\section{Tre clock a confronto}
+\label{sec:tre_clock}
+
+Le tre criticità hanno origini diverse ma una radice comune. La finestra fissa stabilisce la durata e il numero dei passi senza guardare il campione. Le due alternative esaminate in questa sezione allentano questo vincolo in modi opposti. La prima rinuncia al tempo fisico e taglia la registrazione secondo il numero di eventi. La seconda conserva il tempo fisico ma lascia che il numero dei passi segua la durata della registrazione. La figura~\ref{fig:tre_clock} mostra lo stesso gesto suddiviso secondo i tre schemi, la tabella~\ref{tab:contratti_clock} ne confronta le proprietà.
+
+\begin{figure}[tbp]
+    \centering
+    \includegraphics[width=\textwidth]{images/cap4/cap4_tre_clock.pdf}
+    \caption{La registrazione di DVS128 Gesture della figura~\ref{fig:aliasing}, circa $7{,}5\,\mathrm{s}$ di rotazione, suddivisa secondo i tre clock. In alto, la frequenza degli eventi su intervalli di $10\,\mathrm{ms}$. Sotto, i passi delle tre rappresentazioni, con i passi privi di eventi in tinta chiara. La finestra fissa usa 40 bin da $500\,\mathrm{ms}$, dei quali soltanto 16 contengono eventi. I gruppi a eventi costanti e i bin a lunghezza variabile coprono esattamente la registrazione.}
+    \label{fig:tre_clock}
+\end{figure}
+
+\subsection{Frame a eventi costanti}
+\label{subsec:eventi_costanti}
+
+La rappresentazione a eventi costanti (\emph{fixed event-count frames}) divide l'intera registrazione in 40 gruppi consecutivi che contengono lo stesso numero di eventi, a meno di uno, secondo l'equazione~\eqref{eq:gruppi_eventi_bilanciati}, e in ciascun gruppo conta gli eventi ON e OFF di ogni pixel come la finestra fissa. Suddivisioni di questo tipo sono diffuse tanto nella visione a eventi, dove le fette a numero costante di eventi si affiancano a quelle a durata costante~\cite{liu2018adaptive,gallego2022event}, quanto nelle librerie per le SNN~\cite{fang2023spikingjelly}.
+
+Il vantaggio è evidente. Ogni passo riceve la stessa quantità di attività, la coda vuota scompare e una fase molto intensa viene distribuita su più passi. Il prezzo è altrettanto chiaro. La durata fisica di un passo dipende dal campione e, all'interno del campione, dall'intensità dell'attività, sicché un ritardo di 8 passi nel mixer temporale può corrispondere, a seconda del dataset e del tratto di registrazione, a poche decine di millisecondi oppure a interi secondi. Inoltre, per dividere la registrazione in 40 parti uguali occorre conoscere in anticipo il numero totale degli eventi, e la rappresentazione è perciò applicabile soltanto a registrazioni già concluse. Negli esperimenti di questo capitolo il modello e i suoi ritardi restano identici a quelli usati con la finestra fissa.
+
+\subsection{Durata fissa e lunghezza variabile}
+\label{subsec:lunghezza_variabile}
+
+La rappresentazione a lunghezza variabile (\emph{fixed-duration bins with variable sequence length}) conserva invece il tempo fisico. Tutti i bin di un dataset hanno la stessa durata $\Delta$, ma la sequenza parte dal primo evento e si ferma al bin che contiene l'ultimo, secondo la regola dell'equazione~\eqref{eq:lunghezza_clock_fisico}. Per un campione $i$ con timestamp interi in microsecondi, la lunghezza è
+\begin{equation}
+\label{eq:lunghezza_vc}
+T_i=\left\lceil\frac{D_i}{\Delta}\right\rceil,
+\qquad
+D_i=t_{\mathrm{last},i}-t_{\mathrm{first},i}+1,
+\end{equation}
+dove il microsecondo aggiunto garantisce che anche un evento caduto sul bordo di un bin trovi posto nella sequenza. Il numero dei passi varia così da un campione all'altro, mentre il loro significato fisico resta lo stesso. Non c'è coda vuota, nessun evento viene scartato, e i silenzi interni alla registrazione restano visibili come bin validi privi di eventi.
+
+Resta da scegliere $\Delta$. Per conservare lo stesso budget medio di passi della finestra fissa, la durata dei bin viene calibrata sul solo insieme di addestramento, come il più piccolo intero per cui la lunghezza media non supera 40,
+\begin{equation}
+\label{eq:calibrazione_delta}
+\Delta=\min\Bigl\{d\in\mathbb N^{+}\ \Big|\ \frac{1}{|\mathcal D_{\mathrm{tr}}|}\sum_{i\in\mathcal D_{\mathrm{tr}}}\Bigl\lceil\frac{D_i}{d}\Bigr\rceil\leq40\Bigr\},
+\end{equation}
+dove $\mathcal D_{\mathrm{tr}}$ è l'insieme di addestramento. La tabella~\ref{tab:calibrazione_vc} riporta i valori ottenuti. La stessa $\Delta$ viene applicata senza modifiche alla validazione, dove la lunghezza media resta vicina a 40 ma i singoli campioni si distribuiscono su intervalli ampi, da 16 a 74 passi su DVS128 Gesture e fino a 285 per la registrazione più lunga di THU-EACT-50-CHL.
+
+Sequenze di lunghezza diversa richiedono, all'interno di un batch, passi di padding. Coerentemente con la distinzione discussa a proposito dell'equazione~\eqref{eq:maschera_passi_validi}, questi passi sono esclusi da ogni calcolo. Non contribuiscono alle statistiche della batch normalization, non aggiornano i potenziali di membrana né la memoria del mixer temporale, e non entrano nel readout, che diventa una media sui soli $T_i$ passi validi del campione, nella forma dell'equazione~\eqref{eq:readout_media} con $T_i$ al posto di $T$. Un bin valido senza eventi, invece, resta un'osservazione e viene elaborato come tale.
+
+Cambiando la durata dei bin cambia anche il significato dei ritardi. Per conservare gli orizzonti fisici del mixer temporale, i ritardi vengono riscalati e arrotondati alla nuova griglia, $d'_k=\operatorname{round}\bigl(d_k\,\Delta t/\Delta\bigr)$, dove $\Delta t$ è la durata dei bin della finestra fissa. Su DVS-Lip, per esempio, i ritardi $(1,2,4,8)$ da $50\,\mathrm{ms}$ diventano $(2,4,7,15)$ da $27{,}4\,\mathrm{ms}$, e il più lungo passa da $400$ a $411\,\mathrm{ms}$. La costante $\tau_d$ dei neuroni resta invece pari a 2 passi, una scelta su cui si tornerà nella sezione~\ref{subsec:settling_tau}.
+
+\begin{table}[tbp]
+\centering
+\small
+\renewcommand{\arraystretch}{1.2}
+\caption{Calibrazione della rappresentazione a lunghezza variabile. La durata $\Delta$ è calibrata sul solo addestramento e applicata invariata alla validazione. I ritardi del mixer temporale sono riscalati per conservare gli orizzonti fisici della finestra fissa, indicati nell'ultima colonna.}
+\label{tab:calibrazione_vc}
+\begin{adjustbox}{max width=\textwidth}
+\begin{tabular}{l c c c c c}
+\hline
+\textbf{Dataset} & \textbf{$\Delta t$ fissa} & \textbf{$\Delta$ variabile} & \textbf{Passi in validazione} & \textbf{Ritardi} & \textbf{Orizzonti [ms]} \\
+\hline
+DVS-Lip & $50\,\mathrm{ms}$ & $27{,}42\,\mathrm{ms}$ & da 25 a 67 & $2,4,7,15$ & $55,110,192,411$ \\
+DVS128 Gesture & $500\,\mathrm{ms}$ & $164{,}36\,\mathrm{ms}$ & da 16 a 74 & $3,6,12,24$ & $493,986,1972,3945$ \\
+CIFAR10-DVS & $50\,\mathrm{ms}$ & $32{,}88\,\mathrm{ms}$ & da 37 a 44 & $2,3,6,12$ & $66,99,197,395$ \\
+THU-EACT-50-CHL & $200\,\mathrm{ms}$ & $70{,}00\,\mathrm{ms}$ & da 20 a 285 & $3,6,11,23$ & $210,420,770,1610$ \\
+\hline
+\end{tabular}
+\end{adjustbox}
+\end{table}
+
+\begin{table}[tbp]
+\centering
+\small
+\renewcommand{\arraystretch}{1.2}
+\caption{Proprietà dei tre clock dell'input.}
+\label{tab:contratti_clock}
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{3.3cm} >{\raggedright\arraybackslash}X >{\raggedright\arraybackslash}X >{\raggedright\arraybackslash}X@{}}
+\hline
+ & \textbf{Finestra fissa} & \textbf{Eventi costanti} & \textbf{Lunghezza variabile} \\
+\hline
+Durata di un passo & fissa per dataset & variabile, segue l'attività & fissa per dataset, calibrata sull'addestramento \\
+Numero di passi & 40 & 40 & variabile, 40 in media \\
+Parte di registrazione elaborata & quella entro la finestra & intera & intera \\
+Passi dopo l'ultimo evento & sì, la coda vuota & no & no \\
+Significato fisico di un ritardo & costante & variabile & costante \\
+Informazione necessaria in anticipo & nessuna & numero totale di eventi & nessuna \\
+\hline
+\end{tabularx}
+\end{table}
+
+\subsection{Risultati sui quattro dataset}
+\label{subsec:risultati_clock}
+
+La figura~\ref{fig:risultati_clock} riassume il confronto, e la tabella~\ref{tab:risultati_clock} ne riporta i valori. Il quadro non è uniforme, ed è proprio la sua disomogeneità a essere istruttiva.\footnote{Le esecuzioni di riferimento non condividono tutte lo stesso frazionamento in microbatch, e su DVS-Lip e DVS128 Gesture il confronto tra finestra fissa e lunghezza variabile ne combina due diversi. Dove esistono esecuzioni che differiscono soltanto per il frazionamento, la Macro-F1 cambia di $0{,}09$ punti su DVS-Lip e di $0{,}14$ su CIFAR10-DVS, molto meno degli effetti discussi nel testo. Su THU-EACT-50-CHL tutte le esecuzioni usano lo stesso frazionamento.}
+
+\begin{figure}[tbp]
+    \centering
+    \includegraphics[width=\textwidth]{images/cap4/cap4_risultati_clock.pdf}
+    \caption{Macro-F1 del modello di riferimento con i tre clock, sulla validazione di sviluppo. Il simbolo pieno indica l'esecuzione con seed 42, i simboli vuoti le repliche con altri seed disponibili. Ogni pannello ha una propria scala verticale. Su THU-EACT-50-CHL la rappresentazione a eventi costanti non ha superato le verifiche preliminari.}
+    \label{fig:risultati_clock}
+\end{figure}
+
+DVS128 Gesture è il caso più netto. Entrambe le alternative superano la finestra fissa di circa otto punti di Macro-F1, $94{,}8$ con gli eventi costanti e $94{,}2$ con la lunghezza variabile contro $86{,}5$, e le repliche con un secondo seed confermano il distacco. Anche la media delle ultime 16 epoche, meno esposta alla scelta del massimo, sale da $81{,}4$ a $93{,}9$ e $93{,}1$. Una parte di questo guadagno si lascia ricondurre direttamente alle rotazioni. La finestra fissa sbaglia 19 campioni in più della lunghezza variabile, e 13 di questi appartengono alle quattro classi di rotazione.
+
+Su THU-EACT-50-CHL la lunghezza variabile porta la Macro-F1 da $45{,}6$ a $54{,}9$ e l'accuratezza da $50{,}4$ a $61{,}2$. Una seconda esecuzione della finestra fissa con un altro seed arriva a $48{,}7$, riducendo il distacco senza annullarlo. La rappresentazione a eventi costanti, invece, non ha superato su questo dataset il test di sovradattamento controllato descritto nella sezione~\ref{subsec:verifiche_preliminari}, e non è stata addestrata in forma completa. È un esito da registrare più che da interpretare. Una possibile ragione, non verificata, è la forte variabilità del numero di eventi, che su THU-EACT-50-CHL spazia su oltre due ordini di grandezza e rende i gruppi di campioni diversi molto disomogenei tra loro.
+
+DVS-Lip separa invece le due alternative. Gli eventi costanti peggiorano nettamente il risultato, da $55{,}2$ a $47{,}2$, mentre la lunghezza variabile arriva a $56{,}9$. Quest'ultimo valore supera di poco tutti e tre i seed della finestra fissa, compresi tra $54{,}9$ e $56{,}6$, e il margine va letto come un piccolo vantaggio, non come un salto. Una lettura plausibile del risultato degli eventi costanti chiama in causa la natura del segnale. Nella lettura labiale contano il ritmo e la durata relativa dei movimenti, e una suddivisione che dilata i tratti quieti e comprime quelli concitati altera proprio queste proporzioni.
+
+CIFAR10-DVS, infine, si comporta come ci si poteva attendere da un dataset con dinamica imposta e durate quasi identiche. Con il seed di riferimento le due alternative guadagnano tra un punto e mezzo e due punti e mezzo, $70{,}3$ con gli eventi costanti e $69{,}4$ con la lunghezza variabile contro $67{,}8$. Con tre seed per ciascuna configurazione, però, le medie della finestra fissa e della lunghezza variabile, $67{,}7$ e $68{,}3$, distano poco più di mezzo punto, meno della variabilità tra seed. Su questo dataset il clock conta poco.
+
+\begin{table}[tbp]
+\centering
+\small
+\renewcommand{\arraystretch}{1.2}
+\caption{Accuratezza e Macro-F1 [\%] del modello di riferimento con i tre clock, sulla validazione di sviluppo, seed 42. Le repliche disponibili con altri seed danno, in Macro-F1, $54{,}88$ e $56{,}56$ per la finestra fissa su DVS-Lip, $86{,}52$ per la finestra fissa e $95{,}19$ per la lunghezza variabile su DVS128 Gesture, $67{,}24$ e $68{,}08$ per la finestra fissa e $67{,}17$ e $68{,}27$ per la lunghezza variabile su CIFAR10-DVS, $48{,}67$ per la finestra fissa su THU-EACT-50-CHL.}
+\label{tab:risultati_clock}
+\begin{tabular}{l c c c}
+\hline
+\textbf{Dataset} & \textbf{Finestra fissa} & \textbf{Eventi costanti} & \textbf{Lunghezza variabile} \\
+\hline
+DVS-Lip & $55{,}53$ / $55{,}18$ & $47{,}21$ / $47{,}23$ & $56{,}76$ / $56{,}85$ \\
+DVS128 Gesture & $87{,}12$ / $86{,}52$ & $95{,}08$ / $94{,}83$ & $94{,}32$ / $94{,}23$ \\
+CIFAR10-DVS & $68{,}00$ / $67{,}79$ & $70{,}11$ / $70{,}31$ & $69{,}33$ / $69{,}36$ \\
+THU-EACT-50-CHL & $50{,}38$ / $45{,}55$ & non disponibile & $61{,}15$ / $54{,}93$ \\
+\hline
+\end{tabular}
+\end{table}
+
+Dove nasce il guadagno? La figura~\ref{fig:quartili_durata} divide la validazione in quartili di durata e confronta, quartile per quartile, i due modelli che lavorano in tempo fisico. Su DVS128 Gesture e THU-EACT-50-CHL la lunghezza variabile è migliore in tutti i quartili, e il vantaggio più ampio si concentra sui campioni più brevi, quelli che nella finestra fissa lasciano la coda più lunga. Sul quartile più breve di THU-EACT-50-CHL l'accuratezza passa dal $47\%$ al $68\%$. Su DVS-Lip il quadro è quasi rovesciato. I campioni più brevi vengono osservati con più passi utili, in mediana 33 contro i 18 della finestra fissa, ma perdono i passi di assestamento della coda, e il loro risultato non cambia. Il guadagno si concentra nel quartile più lungo, dove l'accuratezza sale dal $61{,}7\%$ al $66{,}6\%$. Su CIFAR10-DVS, con durate quasi identiche, le differenze tra quartili rientrano nell'incertezza.
+
+\begin{figure}[tbp]
+    \centering
+    \includegraphics[width=\textwidth]{images/cap4/cap4_quartili_durata.pdf}
+    \caption{Accuratezza del modello di riferimento con la finestra fissa e con la lunghezza variabile, per quartili di durata della registrazione. Le barre verticali indicano l'intervallo di confidenza al $95\%$ di Wilson, ampio dove i quartili contano pochi campioni, come i 66 di DVS128 Gesture. Seed 42, validazione di sviluppo, valutazione in singola precisione.}
+    \label{fig:quartili_durata}
+\end{figure}
+
+Il confronto appaiato, campione per campione, aggiunge un'ultima sfumatura. Su DVS-Lip la lunghezza variabile corregge 467 errori della finestra fissa, ma ne introduce 431 nuovi. I due modelli hanno un'accuratezza simile e sbagliano in buona parte campioni diversi, un indizio che il clock non sposta soltanto il livello delle prestazioni ma anche il tipo di informazione che la rete sfrutta. Su DVS128 Gesture e THU-EACT-50-CHL lo sbilanciamento è invece netto, con 25 correzioni contro 6 nuovi errori e 72 contro 29.
+
+\subsection{Assestamento e costante di tempo}
+\label{subsec:settling_tau}
+
+Il passaggio dalla finestra fissa alla lunghezza variabile cambia più cose insieme. Elimina la coda, ma riduce anche la durata dei bin, e poiché $\tau_d$ resta di 2 passi accorcia la memoria fisica dei neuroni. Su DVS128 Gesture il bin passa da $500$ a $164\,\mathrm{ms}$, e il tempo in cui il potenziale si dimezza si riduce nella stessa proporzione (figura~\ref{fig:settling_tau}a). Per capire quale di questi cambiamenti conti, due controlli riaddestrati modificano la rappresentazione a lunghezza variabile un elemento alla volta.
+
+Il primo aggiunge dopo l'ultimo evento $500\,\mathrm{ms}$ di passi validi senza eventi, restituendo alla rete un breve intervallo di assestamento. La Macro-F1 resta praticamente invariata, $94{,}6$ contro $94{,}2$. Il secondo conserva l'assestamento e porta $\tau_d$ a circa $4{,}91$, il valore per cui in $500\,\mathrm{ms}$ il potenziale decade esattamente come con la finestra fissa. La memoria fisica dei neuroni torna così quella originale, e la Macro-F1 scende a $84{,}0$, al di sotto della stessa finestra fissa. Le due esecuzioni di controllo condividono tra loro il frazionamento in microbatch, diverso da quello dell'esecuzione canonica, e differiscono soltanto per $\tau_d$.
+
+\begin{figure}[tbp]
+    \centering
+    \includegraphics[width=\textwidth]{images/cap4/cap4_settling_tau.pdf}
+    \caption{Assestamento e costante di tempo su DVS128 Gesture. (a)~Frazione del potenziale che sopravvive in assenza di ingresso, in funzione del tempo fisico, per un neurone isolato al di sotto della soglia. Con $\tau_d=2$ il potenziale si dimezza a ogni passo e, con i bin da $164\,\mathrm{ms}$, svanisce circa tre volte più in fretta che con quelli da $500\,\mathrm{ms}$. Con $\tau_d\approx4{,}91$ la curva torna a coincidere con quella della finestra fissa ogni $500\,\mathrm{ms}$. (b)~Macro-F1 della finestra fissa, della lunghezza variabile e dei due controlli riaddestrati, seed 42.}
+    \label{fig:settling_tau}
+\end{figure}
+
+Il risultato sposta l'attenzione dalla coda alla scala temporale. Su DVS128 Gesture, restituire ai neuroni la memoria fisica della finestra fissa basta ad annullare il vantaggio della lunghezza variabile, anche con l'intera registrazione a disposizione e passi più fini. La scala della memoria neuronale pesa dunque almeno quanto l'eliminazione della coda. Il dato riguarda un solo dataset e un solo seed e non autorizza una regola generale, ma mostra con chiarezza che il clock dell'input e la dinamica dei neuroni non possono essere progettati separatamente.
+
+
+% ==============================================================================
+%  Conseguenze per i confronti successivi
+% ==============================================================================
+
+\section{Conseguenze per i confronti successivi}
+\label{sec:conseguenze_clock}
+
+Nessuna delle due alternative prevale ovunque, ma la scelta per i capitoli successivi è netta e cade sulla rappresentazione a lunghezza variabile. Il motivo principale è il clock fisico. Ogni passo ha la stessa durata in tutto il dataset, e ritardi e costanti di tempo conservano un significato preciso, una condizione indispensabile per studiare la memoria della rete. A questo si aggiungono la copertura dell'intera registrazione senza code artificiali e la possibilità di costruire i bin man mano che gli eventi arrivano, senza conoscerne in anticipo il numero totale. Anche sul piano dei risultati la scelta regge il confronto. La lunghezza variabile resta vicina agli eventi costanti su DVS128 Gesture e CIFAR10-DVS, li supera di circa $9{,}6$ punti di Macro-F1 su DVS-Lip e funziona su THU-EACT-50-CHL, dove gli eventi costanti non hanno superato le verifiche preliminari.
+
+Da qui in avanti, il termine di confronto di ogni modifica della memoria è quindi il modello di riferimento addestrato con la rappresentazione a lunghezza variabile, con una Macro-F1 di $56{,}85$ su DVS-Lip, $94{,}23$ su DVS128 Gesture, $69{,}36$ su CIFAR10-DVS e $54{,}93$ su THU-EACT-50-CHL, tutte con seed 42.\footnote{Su ciascun dataset il riferimento condivide il frazionamento in microbatch con le varianti del capitolo successivo. Su DVS-Lip e CIFAR10-DVS si tratta di un unico microbatch da 32 campioni.} I ritardi del mixer temporale sono quelli riscalati della tabella~\ref{tab:calibrazione_vc}, mentre $\tau_d$ resta pari a 2 passi.
+
+Il cambio di clock non rende la rete più economica, ma nemmeno più costosa nel modo che ci si potrebbe aspettare. Poiché $\Delta$ è calibrata per mantenere in media 40 passi, il numero medio dei passi, e con esso quello delle MAC dense, resta praticamente invariato. Crescono invece le operazioni sinaptiche, del $30\%$ su DVS128 Gesture e del $28\%$ su THU-EACT-50-CHL, perché i passi che la finestra fissa dedicava alla coda sono ora occupati da eventi. Lo stesso budget di passi viene speso osservando anziché aspettando. Per una futura implementazione hardware compaiono però due costi nuovi. La lunghezza della sequenza non è più limitata a 40 passi e cresce con la durata della registrazione, fino ai 285 passi del campione più lungo di THU-EACT-50-CHL, e con essa crescono latenza ed energia del singolo campione. Inoltre il buffer del mixer temporale, che deve conservare le correnti fino al ritardo massimo, si allunga con i ritardi espressi in passi, da 8 a 15 su DVS-Lip e a 24 su DVS128 Gesture, mentre lo stato dei neuroni resta invariato.
+
+Infine, la rappresentazione a lunghezza variabile non rende la rete invariante al ritmo. Ritardi e costanti di tempo restano espressi in passi, e un gesto eseguito al doppio della velocità occupa la metà dei passi. La robustezza a questo tipo di variazione viene esaminata nell'analisi trasversale dei risultati. % TODO: \ref al capitolo dell'analisi trasversale (stress sul ritmo dei timestamp)
+
+Il capitolo lascia così in eredità un clock in cui un passo ha lo stesso significato fisico dall'inizio alla fine della sequenza e da un campione all'altro. È la condizione che rende sensato chiedere alla memoria della rete di confrontare il presente con il passato a distanze fisiche prestabilite, ed è da qui che parte il capitolo successivo.
