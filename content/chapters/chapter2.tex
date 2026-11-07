@@ -15,133 +15,155 @@ Non si tratta di una rassegna esaustiva. Ogni contributo discusso è stato selez
 \section{Event camera e rappresentazione degli eventi}
 \label{sec:rappresentazione_event_camera}
 
-Un sensore a eventi non restituisce immagini, bensì osservazioni asincrone delle variazioni locali di luminosità. Per elaborare questo segnale con una rete neurale, che opera su tensori di dimensione regolare, occorre prima tradurlo in una rappresentazione adatta. È una scelta tutt'altro che neutra, perché stabilisce quali informazioni spaziali e temporali vengano conservate, aggregate o scartate prima ancora che il modello inizi a elaborarle.
+Una fotocamera convenzionale scatta fotografie a intervalli regolari, per esempio trenta al secondo, e ogni fotografia registra la luminosità di tutti i pixel, anche di quelli in cui non è cambiato nulla. Una event camera funziona in modo opposto. Ogni pixel resta in silenzio finché la luce che riceve non cambia abbastanza, e in quel momento segnala il cambiamento con un \emph{evento}. Una scena immobile non produce quasi nulla, mentre una mano che si muove produce una scia di eventi lungo i propri contorni, nell'istante esatto in cui si sposta.
+
+Per elaborare questo segnale con una rete neurale, che lavora su tensori di dimensioni fisse, occorre raccogliere gli eventi in una struttura regolare. Questa sezione descrive prima il segnale prodotto dal sensore e poi le scelte necessarie per trasformarlo in un tensore. Sono scelte tutt'altro che neutre, perché decidono quali informazioni arrivano alla rete e quali vanno perse prima ancora che l'elaborazione cominci.
 
 \subsection{Dal contrasto luminoso al flusso di eventi}
+\label{subsec:contrasto_eventi}
 
-Nel modello ideale di un Dynamic Vision Sensor (DVS) ogni pixel opera indipendentemente dagli altri. Sorveglia il logaritmo dell'intensità luminosa che lo colpisce e, quando questo varia a sufficienza, emette un evento~\cite{lichtsteiner2008dvs}. Ciascun evento è descritto dalla quadrupla
+Nel modello ideale di un Dynamic Vision Sensor (DVS) ogni pixel lavora indipendentemente dagli altri e osserva il logaritmo dell'intensità luminosa che lo colpisce, $L(x,y,t)=\log I(x,y,t)$~\cite{lichtsteiner2008dvs}. Il pixel conserva un valore di riferimento, cioè il livello di $L$ al momento del suo ultimo evento, e lo confronta di continuo con il valore attuale. Quando la differenza raggiunge una soglia $C>0$, verso l'alto o verso il basso, il pixel emette un evento e aggiorna il riferimento. In formule, l'evento $i$-esimo viene emesso nell'istante $t_i$ in cui
+\begin{equation}
+\label{eq:soglia_contrasto}
+L(x_i,y_i,t_i)-L(x_i,y_i,t_i^{\mathrm{ref}})=p_i\,C,
+\end{equation}
+dove $t_i^{\mathrm{ref}}$ è l'istante a cui risale il riferimento, cioè l'evento precedente dello stesso pixel o la sua inizializzazione, e la polarità $p_i$ vale $+1$ se la luce è aumentata e $-1$ se è diminuita~\cite{gallego2022event}. Ogni evento è quindi descritto da quattro numeri,
 \begin{equation}
 \label{eq:evento_quadrupla}
 e_i=(x_i,y_i,t_i,p_i),
 \end{equation}
-dove $(x_i,y_i)$ individua il pixel, $t_i$ è il timestamp e $p_i\in\{-1,+1\}$ la polarità, cioè il segno della variazione. Posto $L(x,y,t)=\log I(x,y,t)$, un evento viene generato idealmente quando la variazione accumulata raggiunge una soglia simmetrica $C>0$,
-\begin{equation}
-\label{eq:soglia_contrasto}
-L(x_i,y_i,t_i)-L(x_i,y_i,t_i^{\mathrm{ref}})=p_i C,
-\end{equation}
-dove $t_i^{\mathrm{ref}}$ è l'istante cui risale il valore di riferimento, cioè l'inizializzazione del pixel oppure il suo evento precedente. La soglia agisce quindi sull'incremento accumulato rispetto a quel riferimento, e non sulla derivata istantanea della luminosità~\cite{gallego2022event}.
+la colonna e la riga del pixel, l'istante e la polarità. Un evento con $x_i=64$, $y_i=30$, $t_i=1\,250\,400\,\mu\mathrm{s}$ e $p_i=+1$, per esempio, dice che il pixel della colonna 64 e della riga 30 è diventato più luminoso $1{,}25$ secondi dopo l'inizio della registrazione.
 
-Il logaritmo rende il sensore sensibile alle variazioni relative dell'intensità piuttosto che a quelle assolute, poiché la differenza tra due logaritmi equivale al logaritmo del loro rapporto,
-\begin{equation}
-\label{eq:rapporto_luminanza}
-\Delta L=\log\frac{I(x_i,y_i,t_i)}{I(x_i,y_i,t_i^{\mathrm{ref}})}.
-\end{equation}
-Una stessa variazione percentuale produce così la stessa risposta indipendentemente dal livello di illuminazione della scena. La polarità distingue un aumento da una diminuzione della luminosità, ma non indica la direzione del movimento. Un evento, del resto, non implica necessariamente un movimento, perché anche un cambiamento dell'illuminazione può generarne. Il sensore reale si discosta poi dal modello ideale in vari modi. Le soglie ON e OFF possono differire tra loro e variare da pixel a pixel, mentre rumore, banda limitata del fotorecettore e periodo refrattario introducono ulteriori scostamenti.
+La figura~\ref{fig:pixel_event_generation} mostra il meccanismo su un singolo pixel, attraversato prima da un oggetto chiaro e poi da uno scuro. Finché la luce cresce, ogni incremento pari a $C$ produce un evento positivo, quando cala ogni decremento pari a $C$ ne produce uno negativo. Due aspetti meritano attenzione. La soglia agisce sulla variazione accumulata dall'ultimo evento, non sulla velocità del cambiamento, sicché nel modello ideale una variazione lenta e una rapida della stessa entità producono lo stesso numero di eventi, soltanto distribuiti in tempi diversi. Le oscillazioni più piccole della soglia, invece, non producono nulla.
 
-\begin{figure}[htbp]
+\begin{figure}[tbp]
     \centering
-    % \includegraphics[width=0.9\textwidth]{images/placeholder_fig2_1.pdf}
-    \rule{0.85\textwidth}{4.5cm} % Box segnaposto per Fig 2.1
-    \caption{Modello ideale di generazione degli eventi in un pixel di una event camera. Un evento viene emesso quando la variazione della luminanza logaritmica rispetto al valore di riferimento supera una soglia positiva o negativa. La polarità indica il segno della variazione osservata.}
+    \includegraphics[width=\textwidth]{images/cap1/cap1_generazione_eventi.pdf}
+    \caption{Generazione degli eventi in un pixel ideale, su un segnale sintetico con soglia $C=0{,}2$. In alto, il logaritmo dell'intensità (linea continua), il valore di riferimento del pixel (tratteggio) e la fascia di ampiezza $\pm C$ attorno a esso. Ogni volta che la curva esce dalla fascia il pixel emette un evento, positivo (triangolo rosso) o negativo (triangolo blu), e il riferimento si sposta di $C$. In basso, la sequenza di eventi che il pixel trasmette. L'oscillazione centrale, più piccola della soglia, non produce alcun evento.}
     \label{fig:pixel_event_generation}
 \end{figure}
 
-Una registrazione è quindi una sequenza di eventi ordinata nel tempo,
+Perché proprio il logaritmo? Perché la differenza tra due logaritmi è il logaritmo del rapporto,
+\begin{equation}
+\label{eq:rapporto_luminanza}
+\Delta L=\log\frac{I(x_i,y_i,t_i)}{I(x_i,y_i,t_i^{\mathrm{ref}})},
+\end{equation}
+e il pixel reagisce quindi alle variazioni relative della luce, non a quelle assolute. Con una soglia $C=0{,}2$, scelta qui a titolo illustrativo, un evento positivo richiede un aumento della luce di circa il $22\%$, poiché $e^{0{,}2}\approx1{,}22$. Vale allo stesso modo per un pixel in piena luce che passa da $1000$ a $1220$ unità e per uno in penombra che passa da $10$ a $12{,}2$. La stessa scena produce così eventi simili in condizioni di illuminazione molto diverse, ed è una delle ragioni dell'ampia gamma dinamica di questi sensori~\cite{gallego2022event}.
+
+La polarità, va precisato, dice soltanto se in quel pixel la luce è aumentata o diminuita, non in quale direzione si muova qualcosa. Si pensi a una barra scura che scorre verso destra su uno sfondo chiaro. I pixel raggiunti dal suo bordo anteriore si scuriscono ed emettono eventi negativi, quelli lasciati dal bordo posteriore tornano chiari ed emettono eventi positivi. Se la barra scorresse verso sinistra, ogni pixel emetterebbe esattamente la stessa sequenza, e la direzione si potrebbe leggere soltanto nell'ordine con cui si attivano pixel vicini. Allo stesso modo, un evento non implica necessariamente un movimento, perché anche una lampada che sfarfalla fa cambiare la luce di molti pixel insieme. Il sensore reale, infine, si allontana dal modello ideale in vari modi. Le soglie positiva e negativa possono differire tra loro e variare da pixel a pixel, e il rumore, la banda limitata del fotorecettore e un breve periodo refrattario dopo ogni evento aggiungono altri scostamenti~\cite{gallego2022event}.
+
+Una registrazione è dunque una lunga sequenza di eventi in ordine di tempo,
 \begin{equation}
 \label{eq:stream_completo}
-\mathcal E=\{e_i\}_{i=1}^{N},\qquad t_i\leq t_{i+1},
+\mathcal E=\{e_i\}_{i=1}^{N},\qquad t_i\leq t_{i+1}.
 \end{equation}
-il cui numero $N$ dipende dall'attività della scena e dalle condizioni di acquisizione. A parità di durata, un intervallo può contenere moltissimi eventi oppure nessuno. La sparsità del segnale non si traduce perciò in un carico di lavoro costante, e chi lo elabora deve saper gestire tanto i silenzi quanto i picchi improvvisi di attività.
+Il numero $N$ degli eventi non dipende dalla durata ma da quanto accade nella scena. Nei dataset usati in questo lavoro, per esempio, una parola pronunciata in circa un secondo produce in media poco più di diecimila eventi, mentre un'immagine di CIFAR10-DVS fatta muovere davanti al sensore per un tempo simile ne produce circa duecentomila (sezione~\ref{sec:dataset}). Anche all'interno della stessa registrazione possono alternarsi lunghi silenzi e raffiche improvvise, e chi elabora il segnale deve saper gestire gli uni e le altre.
 
 \subsection{Discretizzazione e significato del clock}
+\label{subsec:discretizzazione_clock}
 
-Per costruire una sequenza regolare occorre anzitutto decidere come suddividere il flusso. La regola più immediata fissa un'origine temporale $t_0$ e un intervallo $\Delta t$, e raccoglie nel bin $k$-esimo gli eventi che cadono nella finestra corrispondente,
+Una rete neurale spiking elabora l'ingresso a passi discreti. Per presentarle un flusso di eventi bisogna quindi decidere che cosa entri in ciascun passo, cioè come tagliare il flusso in pezzi. La regola che associa ogni passo a un intervallo di tempo, o più in generale a un gruppo di eventi, prende il nome di \emph{clock} dell'input. Le regole possibili sono diverse, e la figura~\ref{fig:partizioni_flusso} le confronta sullo stesso flusso.
+
+La più semplice divide il tempo in intervalli consecutivi della stessa durata $\Delta t$, detti bin, a partire da un'origine $t_0$. Il bin $k$-esimo raccoglie gli eventi caduti nel suo intervallo,
 \begin{equation}
 \label{eq:finestre_fisse}
-\mathcal E_k=\{e_i\in\mathcal E:
-t_0+k\Delta t\leq t_i<t_0+(k+1)\Delta t\}.
+\mathcal E_k=\bigl\{e_i\in\mathcal E\ \big|\ t_0+k\Delta t\leq t_i<t_0+(k+1)\Delta t\bigr\}.
 \end{equation}
-Includere il bordo sinistro ed escludere quello destro garantisce che ogni evento appartenga a un solo bin, anche quando cade esattamente su un confine. In questo schema ogni passo della rete corrisponde alla stessa durata fisica, mentre il numero di eventi contenuti in ciascun bin varia liberamente. La regola che associa ogni passo della rete a un intervallo di tempo fisico costituisce il \emph{clock} dell'input.
+Con $t_0=0$ e $\Delta t=50\,\mathrm{ms}$, un evento all'istante $t_i=123\,\mathrm{ms}$ finisce nel bin $k=2$, quello che va da $100$ a $150\,\mathrm{ms}$. Il bordo sinistro è incluso e quello destro escluso, così che un evento che cade esattamente a $150\,\mathrm{ms}$ appartenga al bin successivo e mai a due bin insieme. In questo schema ogni passo dura lo stesso tempo, mentre il numero di eventi che contiene cambia liberamente da un passo all'altro.
 
-Fissata la durata dei bin, resta da stabilire quanti passi elaborare, e le due scelte sono indipendenti. Una finestra prefissata di durata $D_{\mathrm{win}}=T\Delta t$ produce sempre $T$ passi. Se l'attività termina prima, gli ultimi passi restano privi di eventi, mentre gli eventi successivi al bordo finale vengono esclusi. In alternativa si può conservare l'intera registrazione, dal primo evento $t_0$ all'ultimo $t_{\mathrm{last}}$, mantenendo fisso $\Delta t$. Il numero di passi diventa allora
+Fissata la durata dei bin, resta da decidere quanti passi elaborare. La soluzione più comune è una finestra di durata prefissata, $D_{\mathrm{win}}=T\Delta t$, che produce sempre $T$ passi. Con bin da $50\,\mathrm{ms}$ e una finestra di $2\,\mathrm{s}$ i passi sono 40. Una registrazione di $1{,}2\,\mathrm{s}$ ne riempie i primi 24 e lascia vuoti gli ultimi 16, mentre di una registrazione di $2{,}5\,\mathrm{s}$ vanno persi gli ultimi $0{,}5\,\mathrm{s}$.
+
+In alternativa si può conservare l'intera registrazione, dal primo evento, che fa da origine $t_0$, all'ultimo, che cade all'istante $t_{\mathrm{last}}$, mantenendo bin della stessa durata. Il numero di passi diventa allora
 \begin{equation}
 \label{eq:lunghezza_clock_fisico}
-T=\left\lfloor\frac{t_{\mathrm{last}}-t_0}{\Delta t}\right\rfloor+1,
+T=\left\lfloor\frac{t_{\mathrm{last}}-t_0}{\Delta t}\right\rfloor+1.
 \end{equation}
-dove l'unità aggiunta alla parte intera garantisce che anche un ultimo evento caduto esattamente sul bordo sinistro di un nuovo bin trovi posto nella sequenza. In questo caso la durata $\Delta t$ è comune a tutte le registrazioni e a variare è la lunghezza $T$.
+La parte intera conta i bin completamente trascorsi prima dell'ultimo evento, e l'unità aggiunta fa posto al bin che lo contiene. Con bin da $50\,\mathrm{ms}$ e un ultimo evento a $1199\,\mathrm{ms}$ si ottengono 24 passi. Se l'ultimo evento cadesse esattamente a $1200\,\mathrm{ms}$, sul bordo sinistro di un nuovo bin, i passi sarebbero 25, ed è proprio l'unità aggiunta a garantire che quell'evento trovi posto. In questo schema la durata dei bin è la stessa per tutte le registrazioni, e a cambiare è la lunghezza della sequenza.
 
-Una terza possibilità fissa invece $T$ e divide in parti uguali la durata $D_n$ di ciascun campione $n$, con bin di ampiezza
+Una terza possibilità fa il contrario, fissa il numero di passi $T$ e adatta la durata dei bin a ciascuna registrazione $n$, di durata $D_n$,
 \begin{equation}
 \label{eq:delta_t_rapporto}
 \Delta t_n=\frac{D_n}{T}.
 \end{equation}
-Il clock cambia allora da un campione all'altro. Due eventi separati dallo stesso intervallo fisico possono trovarsi a un numero diverso di passi di distanza, e uno stesso numero di passi può corrispondere a durate diverse. Fissare il numero dei bin, in altre parole, non significa fissare la risoluzione temporale.
+Con $T=40$, un gesto di $4\,\mathrm{s}$ viene diviso in bin da $100\,\mathrm{ms}$ e uno di $8\,\mathrm{s}$ in bin da $200\,\mathrm{ms}$. Il clock cambia così da un campione all'altro. Una distanza di cinque passi corrisponde a mezzo secondo nel primo gesto e a un secondo intero nel secondo, e la rete non ha modo di saperlo. Fissare il numero dei bin, in altre parole, significa non fissare la risoluzione temporale.
 
-Si può anche rinunciare a misurare il tempo e contare gli eventi. Le partizioni a numero di eventi li scorrono in ordine cronologico e chiudono un gruppo ogni $M$ eventi, oppure suddividono l'intera registrazione in $T$ gruppi di cardinalità il più possibile uniforme,
+Si può infine rinunciare del tutto a misurare il tempo e contare gli eventi. Una prima variante chiude un gruppo ogni $M$ eventi, nell'ordine in cui arrivano. Una seconda divide l'intera registrazione in $T$ gruppi che contengono lo stesso numero di eventi, a meno di uno,
 \begin{equation}
 \label{eq:gruppi_eventi_bilanciati}
 n_k\in\left\{\left\lfloor\frac NT\right\rfloor,
                  \left\lceil\frac NT\right\rceil\right\},
-\qquad \sum_{k=1}^{T}n_k=N.
+\qquad \sum_{k=1}^{T}n_k=N,
 \end{equation}
-La seconda variante presuppone di conoscere in anticipo il numero totale $N$ di eventi ed è quindi applicabile soltanto a registrazioni già concluse, cioè offline. La prima non ha questo vincolo, perché ogni gruppo si chiude non appena raggiunge $M$ eventi. In entrambi i casi, però, la distanza misurata in gruppi non corrisponde a un ritardo fisico costante.
+dove $n_k$ è il numero di eventi del gruppo $k$. Con $N=10\,003$ eventi e $T=40$ gruppi, per esempio, tre gruppi ricevono 251 eventi e gli altri 37 ne ricevono 250. In questo schema ogni passo contiene la stessa quantità di attività, ma la sua durata dipende da quanto è intensa la scena. Una raffica concentrata in un decimo di secondo può riempire molti gruppi, mentre un secondo di quiete può starne in uno solo. La seconda variante richiede di conoscere in anticipo il numero totale $N$ degli eventi, e si può applicare soltanto a registrazioni già concluse, cioè offline. La prima non ha questo limite, perché ogni gruppo si chiude non appena raggiunge $M$ eventi. In entrambi i casi, però, una distanza misurata in gruppi non corrisponde a un intervallo di tempo fisso.
 
-Quando la partizione segue il numero di eventi, la durata di un passo smette di essere un dato fissato a priori e diventa una proprietà del gruppo stesso, misurabile come intervallo (\emph{span}) tra il suo primo e il suo ultimo timestamp. Un gruppo formato da un solo evento ha span nullo e occupa comunque un intero passo della sequenza. Se il modello riceve soltanto i conteggi, senza durate né timestamp, questa informazione metrica gli resta inaccessibile.
+\begin{figure}[tbp]
+    \centering
+    \includegraphics[width=\textwidth]{images/cap1/cap1_partizioni.pdf}
+    \caption{Quattro modi di suddividere lo stesso flusso sintetico, che contiene una raffica di attività tra $0{,}35$ e $0{,}55\,\mathrm{s}$ e termina a circa $1{,}17\,\mathrm{s}$. In alto, la frequenza degli eventi. Sotto, i passi prodotti da ciascuna regola, colorati in base al numero di eventi che contengono. La finestra fissa lascia una coda di passi vuoti (tratteggiati), la registrazione intera termina con l'ultimo evento, il numero di passi fisso allarga i bin per coprire la durata, la partizione a eventi costanti produce passi con lo stesso contenuto ma di durata molto diversa, stretti durante la raffica e larghi altrove.}
+    \label{fig:partizioni_flusso}
+\end{figure}
 
-La scelta del clock non è dunque un dettaglio di preprocessing. Da essa dipende il significato fisico di ogni ritardo espresso in passi e di ogni costante di decadimento della rete. Ridurre $\Delta t$, a parità di intervallo osservato, moltiplica gli aggiornamenti, riduce in media i conteggi di ciascun bin e accorcia la durata fisica corrispondente a un decadimento per passo. I protocolli adottati in questo lavoro, compresa l'eventuale calibrazione del clock sul solo insieme di training, saranno specificati nella metodologia.
+Quando i passi seguono il numero di eventi, la loro durata non è più fissata in anticipo ma diventa una proprietà di ciascun gruppo, misurabile come intervallo (\emph{span}) tra il suo primo e il suo ultimo evento. Se la rete riceve soltanto i conteggi, però, questa durata le resta invisibile. Un gruppo di 250 eventi raccolti in $5\,\mathrm{ms}$ e uno raccolto in mezzo secondo occupano entrambi esattamente un passo.
+
+La scelta del clock non è dunque un dettaglio di preprocessing. Da essa dipende il significato fisico di ogni ritardo espresso in passi e di ogni costante di decadimento della rete. Dimezzare $\Delta t$ su una stessa registrazione raddoppia il numero dei passi, dimezza in media i conteggi di ciascun bin e fa sì che un neurone che perde una frazione fissa del proprio potenziale a ogni passo dimentichi due volte più in fretta in tempo reale. I protocolli adottati in questo lavoro sono descritti nel capitolo~\ref{chap:baseline_metodologia} e messi a confronto nel capitolo~\ref{chap:clock_input}.
 
 \subsection{Conteggi e informazione intra-bin}
+\label{subsec:conteggi_intrabin}
 
-Definita la partizione, la rappresentazione più semplice conta, per ogni pixel e ogni bin, quanti eventi di ciascuna polarità vi sono caduti,
+Una volta suddiviso il flusso, bisogna decidere che cosa conservare di ciascun bin. La rappresentazione più semplice conta, per ogni pixel e per ogni bin, quanti eventi di ciascuna polarità vi sono caduti,
 \begin{equation}
 \label{eq:event_frame_accumulo}
 F_k^p(x,y)=\sum_{e_i\in\mathcal E_k}
 \mathbf 1[x_i=x,\ y_i=y,\ p_i=p],
 \qquad F_k\in\mathbb N_0^{2\times H\times W}.
 \end{equation}
-I conteggi conservano la molteplicità degli eventi ma perdono il loro ordine all'interno del bin. Una versione binaria, $\mathbf 1[F_k^p(x,y)>0]$, rinuncia anche alla molteplicità e registra soltanto se un pixel è stato attivo. Tenere separate le due polarità evita invece che eventi di segno opposto nella stessa cella si cancellino a vicenda.
+L'indicatore $\mathbf 1[\cdot]$ vale 1 quando la condizione tra parentesi è vera e 0 altrimenti, quindi la somma conta semplicemente gli eventi del bin $k$ caduti nel pixel $(x,y)$ con polarità $p$. Il risultato è un'immagine a due canali, uno per gli eventi positivi e uno per quelli negativi, spesso chiamata \emph{event frame} (figura~\ref{fig:confronto_rappresentazioni_discrete}a). Se in un bin un pixel riceve tre eventi positivi e uno negativo, il canale positivo vale 3 e quello negativo 1.
 
-Poiché una somma non dipende dall'ordine degli addendi, qualunque rimescolamento degli eventi all'interno di un bin produce lo stesso tensore. Due registrazioni che differiscono soltanto per questo ordine diventano così indistinguibili per un modello che riceva i soli conteggi, per quanto sofisticato esso sia. La risoluzione dell'input pone quindi un limite all'informazione disponibile, che va tenuto distinto dalla capacità della rete di sfruttare quella che rimane.
+Esistono versioni più povere della stessa idea. Una versione binaria, $\mathbf 1[F_k^p(x,y)>0]$, registra soltanto se il pixel è stato attivo, e nell'esempio darebbe 1 in entrambi i canali. Una versione a un solo canale somma gli eventi con il loro segno, e darebbe $3-1=2$. Quest'ultima ha un difetto evidente, perché due eventi positivi e due negativi nello stesso pixel si annullano e producono zero, come se non fosse accaduto nulla. Tenere separate le polarità evita il problema.
 
-La voxel grid conserva una descrizione temporale più fine. Nella formulazione di Zhu et al., i timestamp di un pacchetto di eventi, cioè di un insieme di eventi consecutivi elaborato come un'unica unità, vengono riscalati nell'intervallo $[0,B-1]$,
+Tutte queste versioni condividono però un limite più sottile. Una somma non dipende dall'ordine degli addendi, e i conteggi di un bin non cambiano se gli eventi al suo interno vengono rimescolati. Si pensi a un oggetto chiaro che attraversa rapidamente un pixel scuro. Il pixel prima si illumina e poi torna scuro, ed emette un evento positivo seguito da uno negativo. Un oggetto scuro che attraversa un pixel chiaro produce la sequenza opposta. Se entrambi gli eventi cadono nello stesso bin, i due casi danno esattamente gli stessi conteggi, uno per canale, e nessuna rete, per quanto sofisticata, potrà distinguerli sulla base di quel solo bin. La rappresentazione fissa un limite all'informazione disponibile, che va tenuto distinto dalla capacità della rete di sfruttare quella che rimane.
+
+La \emph{voxel grid} recupera parte dell'informazione temporale perduta~\cite{zhu2019unsupervised}. Si considera un pacchetto di eventi consecutivi, elaborato come un'unica unità, e se ne riscalano i timestamp in modo che il primo evento valga 0 e l'ultimo $B-1$,
 \begin{equation}
 \label{eq:timestamp_normalizzato}
 t_i^*=(B-1)\frac{t_i-t_{\min}}{t_{\max}-t_{\min}},
 \end{equation}
-operazione che richiede un pacchetto di durata non nulla, con $t_{\max}>t_{\min}$. Per coordinate spaziali intere, l'accumulazione nei $B$ bin temporali si scrive
+dove $B$ è il numero di bin temporali desiderati e il pacchetto deve avere durata non nulla, $t_{\max}>t_{\min}$. Ogni evento viene poi distribuito tra i due bin più vicini alla sua posizione $t_i^*$,
 \begin{equation}
 \label{eq:voxel_grid_interpolazione}
 \mathcal V(b,x,y)=\sum_i p_i
-\max(0,1-|b-t_i^*|)
+\max\bigl(0,\,1-|b-t_i^*|\bigr)
 \mathbf 1[x_i=x,\ y_i=y],
+\qquad b\in\{0,\ldots,B-1\}.
 \end{equation}
-con $b\in\{0,\ldots,B-1\}$. Invece di assegnare ogni evento a un solo bin, l'interpolazione lineare lo ripartisce tra i due bin temporali più vicini, con un peso che decresce con la distanza. La formulazione completa interpola anche nello spazio, quando la rettifica dell'immagine o la correzione della distorsione ottica producono coordinate non intere~\cite{zhu2019unsupervised}. Va osservato che la somma firmata incorpora la polarità e può quindi produrre cancellazioni, che l'uso di volumi separati per ON e OFF eviterebbe. Infine, la normalizzazione è relativa agli estremi di ciascun pacchetto e non va confusa con un clock fisico comune a tutti i campioni.
+Il peso $\max(0, 1-|b-t_i^*|)$ vale 1 quando l'evento cade esattamente sul bin $b$, decresce in modo lineare con la distanza e si annulla a un bin di distanza. Con $B=5$, un evento positivo con $t_i^*=2{,}3$ aggiunge $0{,}7$ al bin 2 e $0{,}3$ al bin 3, e niente agli altri. L'evento non viene attribuito tutto a un bin o tutto all'altro, e la sua posizione temporale sopravvive, sfumata, nella ripartizione dei pesi (figura~\ref{fig:confronto_rappresentazioni_discrete}b). La formulazione completa interpola anche nello spazio, quando la correzione della distorsione ottica produce coordinate non intere~\cite{zhu2019unsupervised}.
 
-La \emph{time surface} adotta un punto di vista diverso e descrive quanto recente sia l'attività di ciascun pixel. Nella forma più semplice, basata sull'ultimo evento ricevuto,
+Due dettagli vanno tenuti presenti. La somma usa la polarità con il suo segno, e può quindi produrre le stesse cancellazioni dell'event frame a un canale, che volumi separati per eventi positivi e negativi eviterebbero. Inoltre la scala temporale è relativa a ciascun pacchetto. Con $B=5$, un intervallo di $10\,\mathrm{ms}$ occupa meno di mezzo bin in un pacchetto lungo $100\,\mathrm{ms}$ e ben due bin in uno lungo $20\,\mathrm{ms}$, e non va confuso con un clock fisico comune a tutti i campioni.
+
+La \emph{time surface} adotta un punto di vista diverso. Invece di contare gli eventi, descrive quanto sia recente l'attività di ciascun pixel. Nella forma più semplice,
 \begin{equation}
 \label{eq:time_surface}
 S_p(x,y,t)=
 \exp\left[-\frac{t-t_{\mathrm{last}}^p(x,y)}{\tau_s}\right],
 \end{equation}
-dove $t_{\mathrm{last}}^p(x,y)$ è l'istante dell'ultimo evento di polarità $p$ giunto al pixel, e il valore è nullo dove non è ancora arrivato alcun evento. Un pixel appena attivato vale circa uno, e il suo valore decade esponenzialmente con una costante $\tau_s$ che regola per quanto tempo l'attività resta visibile. Si tratta della variante elementare di una famiglia più ampia. HATS, per esempio, somma i contributi esponenziali di più eventi passati in un intorno spazio-temporale e aggrega le superfici così ottenute in descrittori~\cite{sironi2018hats}. Una superficie dell'ultimo evento, una somma di tracce e un conteggio per bin riassumono dunque aspetti diversi della stessa storia.
+dove $t_{\mathrm{last}}^p(x,y)$ è l'istante dell'ultimo evento di polarità $p$ arrivato al pixel prima di $t$, e il valore è zero dove non è ancora arrivato nulla. Un pixel appena attivato vale circa 1, e il suo valore decade poi in modo esponenziale con costante $\tau_s$. Con $\tau_s=50\,\mathrm{ms}$, un pixel attivato $10\,\mathrm{ms}$ prima vale circa $0{,}82$, uno attivato $100\,\mathrm{ms}$ prima circa $0{,}14$. Il risultato somiglia alla scia di una cometa, intensa dove il movimento è appena passato e sempre più tenue alle sue spalle (figura~\ref{fig:confronto_rappresentazioni_discrete}c). È la variante elementare di una famiglia più ampia. HATS, per esempio, somma i contributi esponenziali di più eventi in un intorno spazio-temporale e li aggrega in descrittori~\cite{sironi2018hats}.
 
-\begin{figure}[htbp]
+\begin{figure}[tbp]
     \centering
-    % \includegraphics[width=0.95\textwidth]{images/placeholder_fig2_2.pdf}
-    \rule{0.9\textwidth}{4.8cm} % Box segnaposto per Fig 2.2
-    \caption{Tre rappresentazioni dello stesso event stream. L'aggregazione in event frame privilegia la distribuzione spaziale dell'attività, la voxel grid ne conserva una discretizzazione temporale, la time surface codifica la recenza degli eventi mediante uno stato locale che decresce nel tempo.}
+    \includegraphics[width=\textwidth]{images/cap1/cap1_rappresentazioni.pdf}
+    \caption{Tre rappresentazioni degli stessi $100\,\mathrm{ms}$ di una registrazione di DVS128 Gesture, durante una rotazione del braccio sinistro (circa $9\,600$ eventi). (a)~Event frame, con i conteggi degli eventi positivi e negativi in due canali separati. (b)~Voxel grid con $B=5$ bin temporali, in cui la distribuzione dell'attività cambia da un bin all'altro, con i valori positivi in rosso e quelli negativi in blu. (c)~Time surface dell'ultimo evento di entrambe le polarità, valutata alla fine dell'intervallo, in cui la posizione più recente del movimento appare come una scia.}
     \label{fig:confronto_rappresentazioni_discrete}
 \end{figure}
 
-La tabella~\ref{tab:confronto_rappresentazioni} riassume questi compromessi. Una rappresentazione più ricca costa di più da costruire e da conservare, e la sua utilità dipende in ultima analisi dalle operazioni che il modello è in grado di applicarvi.
+Event frame, voxel grid e time surface riassumono dunque aspetti diversi della stessa storia, la quantità dell'attività, la sua collocazione nel tempo e la sua recenza. La tabella~\ref{tab:confronto_rappresentazioni} ne riassume i compromessi. Una rappresentazione più ricca costa di più da costruire e da conservare, e la sua utilità dipende in ultima analisi dalle operazioni che il modello è in grado di applicarvi.
 
-\begin{table}[htbp]
+\begin{table}[tbp]
 \centering
 \small
 \renewcommand{\arraystretch}{1.2}
 \caption{Informazione conservata e principali limiti delle rappresentazioni considerate.}
 \label{tab:confronto_rappresentazioni}
-\begin{tabularx}{\textwidth}{@{}p{2.25cm} >{\raggedright\arraybackslash}X >{\raggedright\arraybackslash}X >{\raggedright\arraybackslash}X@{}}
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{2.25cm} >{\raggedright\arraybackslash}X >{\raggedright\arraybackslash}X >{\raggedright\arraybackslash}X@{}}
 \hline
 \textbf{Formato} & \textbf{Informazione conservata} & \textbf{Descrizione del tempo} & \textbf{Limite principale} \\
 \hline
@@ -154,18 +176,19 @@ Time surface dell'ultimo evento & Recenza per pixel e polarità & Tempo trascors
 \end{table}
 
 \subsection{Tempo valido, silenzi e padding}
+\label{subsec:tempo_valido_padding}
 
-Quando le sequenze hanno lunghezze diverse sorge un problema pratico. Le reti vengono addestrate su batch, gruppi di campioni elaborati insieme in un unico tensore, e un tensore richiede che tutte le sequenze abbiano la stessa lunghezza. Le più brevi vengono quindi completate con passi fittizi, il cosiddetto padding, fino alla lunghezza massima $T_{\max}$. Per un campione $n$ di lunghezza valida $T_n$, una maschera
+Quando le sequenze hanno lunghezze diverse sorge un problema pratico. Le reti vengono addestrate su batch, cioè gruppi di campioni elaborati insieme in un unico tensore, e un tensore richiede che tutte le sequenze abbiano la stessa lunghezza. Le sequenze più brevi vengono quindi allungate con passi fittizi, il cosiddetto \emph{padding}, fino alla lunghezza della più lunga, $T_{\max}$. Per tenere traccia di quali passi siano veri, a ogni campione $n$ di lunghezza $T_n$ si associa una maschera
 \begin{equation}
 \label{eq:maschera_passi_validi}
 m_{k,n}=\mathbf 1[k<T_n],
 \qquad k=0,\ldots,T_{\max}-1,
 \end{equation}
-distingue i passi realmente osservati da quelli aggiunti soltanto per allineare le dimensioni.
+che vale 1 sui passi osservati e 0 su quelli aggiunti. In un batch di tre sequenze lunghe 25, 33 e 40 passi, per esempio, tutte vengono portate a 40, e la maschera della prima vale 1 sui primi 25 passi e 0 sugli ultimi 15.
 
-Un passo di padding e un bin valido privo di eventi possono contenere entrambi soltanto zeri, ma hanno un significato opposto. Il bin vuoto attesta che è trascorso del tempo senza attività, ed è a tutti gli effetti un'osservazione. Il padding non osserva nulla. Confonderli altera il campione elaborato, per esempio quando il padding entra nelle statistiche di normalizzazione o nel denominatore di una media. Per la stessa ragione, un modulo dotato di stato persistente deve far avanzare il proprio tempo interno soltanto sui passi effettivi, ignorando le posizioni introdotte dal batching.
+Un passo di padding e un bin valido senza eventi possono contenere entrambi soltanto zeri, ma significano cose opposte. Il bin vuoto dice che è trascorso del tempo senza attività, ed è a tutti gli effetti un'osservazione. Il padding non osserva nulla. Confonderli altera il campione. Se la rete calcolasse la media delle proprie feature su tutti i 40 passi anziché sui 25 validi, il risultato della prima sequenza verrebbe ridotto di oltre un terzo senza alcuna ragione legata ai dati. Lo stesso accade se il padding entra nelle statistiche della normalizzazione, e un modulo dotato di stato interno deve far avanzare il proprio tempo soltanto sui passi validi.
 
-Analogamente, l'assenza di eventi in ingresso non implica che la rete resti inattiva. Dopo l'ultimo evento del sensore, i potenziali di membrana e i moduli temporali possono continuare a influenzare il calcolo per tutti i passi che il protocollo prevede. La coda vuota di una finestra prefissata e il padding di un batch sono perciò due condizioni diverse, che vanno dichiarate separatamente.
+C'è infine una terza situazione, diversa da entrambe. Quando la registrazione finisce prima della finestra prevista, come nell'esempio della finestra di $2\,\mathrm{s}$, i passi successivi sono validi ma privi di eventi. La rete, però, non resta necessariamente inattiva, perché i potenziali di membrana e le memorie interne continuano a evolvere anche senza ingresso. Questa coda vuota e il padding di un batch vanno quindi dichiarati separatamente.
 
 L'intera catena di elaborazione si può riassumere nello schema
 \begin{equation}
@@ -175,7 +198,7 @@ L'intera catena di elaborazione si può riassumere nello schema
 \overset{\mathcal M}{\longrightarrow}Z_{1:T}
 \overset{\mathcal D}{\longrightarrow}\hat y,
 \end{equation}
-dove $\mathcal R$ costruisce la rappresentazione, $\mathcal M$ ne elabora la dinamica e $\mathcal D$ produce la decisione. Ognuno di questi stadi può limitare l'uso dell'informazione temporale. Per attribuire correttamente un miglioramento occorre quindi tenere fissi rappresentazione e clock quando si confrontano architetture, e dichiarare esplicitamente ogni variazione dell'input quando è quest'ultimo l'oggetto dell'esperimento.
+dove $\mathcal R$ costruisce la rappresentazione, $\mathcal M$ ne elabora la dinamica e $\mathcal D$ prende la decisione. Ognuno dei tre stadi può limitare l'uso dell'informazione temporale. Per questo, quando si confrontano architetture diverse, rappresentazione e clock vanno tenuti fissi, e quando è l'ingresso stesso l'oggetto dell'esperimento ogni sua modifica va dichiarata come tale.
 
 
 % ==============================================================================
@@ -185,21 +208,24 @@ dove $\mathcal R$ costruisce la rappresentazione, $\mathcal M$ ne elabora la din
 \section{Dinamica neuronale e memoria nelle Spiking Neural Networks}
 \label{sec:dinamica_neuronale_memoria}
 
-In una Spiking Neural Network (SNN) ogni neurone possiede uno stato interno che evolve lungo la sequenza e condiziona la risposta agli ingressi successivi. La rete è quindi ricorrente anche quando non contiene connessioni sinaptiche che riportino all'indietro l'uscita di uno strato~\cite{neftci2019surrogate}. In forma astratta,
+Un neurone artificiale convenzionale, come quello di un percettrone multistrato con attivazione ReLU, calcola la propria uscita a partire dal solo ingresso corrente. Se riceve due volte lo stesso ingresso risponde due volte allo stesso modo, e non conserva nulla da un'elaborazione all'altra. Il neurone di una Spiking Neural Network (SNN) si comporta diversamente. Possiede una variabile interna, il potenziale di membrana, che accumula gli ingressi ricevuti e sopravvive da un passo al successivo, e la sua risposta dipende quindi anche da ciò che è accaduto prima. In forma astratta,
 \begin{equation}
 \label{eq:snn_generica}
 h_k=F(h_{k-1},X_k),
 \end{equation}
-dove $h_k$ è lo stato al passo computazionale $k$ e $X_k$ l'ingresso corrispondente. Quali aspetti del passato restino accessibili dipende dalla forma di $F$, dal clock dell'input e dal modo in cui vengono trattati gli spike.
+cioè lo stato $h_k$ al passo $k$ si ottiene aggiornando lo stato precedente $h_{k-1}$ con il nuovo ingresso $X_k$. È la struttura di una rete ricorrente, con una differenza importante. In una rete ricorrente classica il passato rientra attraverso connessioni esplicite che riportano l'uscita di uno strato al suo ingresso, mentre in una SNN la ricorrenza è già dentro ogni neurone, e la rete ha memoria anche quando i suoi strati sono collegati soltanto in avanti~\cite{neftci2019surrogate}.
+
+Questa sezione descrive come un neurone accumuli e dimentichi gli ingressi, come la velocità con cui dimentica dipenda dal clock dell'input, come si addestri una rete che comunica con impulsi discontinui e che cosa una memoria di questo tipo permetta di fare.
 
 \subsection{Integrazione, soglia e reset}
+\label{subsec:integrazione_soglia_reset}
 
-Il modello più semplice è l'Integrate-and-Fire (IF), che si comporta come un accumulatore. Il potenziale di membrana, prima dell'eventuale emissione di uno spike, vale
+Il modello più semplice è l'Integrate-and-Fire (IF), che si può immaginare come un accumulatore. A ogni passo il neurone somma al proprio potenziale il contributo dell'ingresso,
 \begin{equation}
 \label{eq:if_discreto}
 H_k=V_{k-1}+X_k,
 \end{equation}
-dove $V_{k-1}$ è lo stato lasciato dal passo precedente, dopo un eventuale reset, e $X_k$ il contributo dell'ingresso. Il neurone emette uno spike quando il potenziale raggiunge la soglia $V_{\mathrm{th}}$,
+e quando il potenziale raggiunge una soglia $V_{\mathrm{th}}$ emette uno spike,
 \begin{equation}
 \label{eq:if_spike}
 S_k=\Theta(H_k-V_{\mathrm{th}}),
@@ -210,140 +236,158 @@ S_k=\Theta(H_k-V_{\mathrm{th}}),
 0,&z<0.
 \end{cases}
 \end{equation}
-In assenza di reset lo stato conserva indefinitamente i contributi ricevuti, perché il modello non prevede alcun decadimento spontaneo.
+La funzione a gradino $\Theta$ traduce il confronto con la soglia in una risposta tutto o niente. Lo spike vale 1 se il potenziale ha raggiunto la soglia e 0 altrimenti, senza valori intermedi, e un potenziale appena sopra la soglia produce lo stesso spike di uno che la supera di molto.
 
-Il Leaky Integrate-and-Fire (LIF) aggiunge proprio questo elemento, la perdita o \emph{leak}. Al di sotto della soglia il potenziale tende spontaneamente a tornare verso il valore di riposo $V_{\mathrm{rest}}$. Nella formulazione continua,
+Le due equazioni usano due simboli diversi per il potenziale, e conviene chiarire subito perché. All'interno di ogni passo avvengono due cose in sequenza. Prima il neurone riceve l'ingresso e si carica, e $H_k$ indica il potenziale in questo momento, prima che il neurone decida se emettere lo spike. Poi, se lo spike è stato emesso, il potenziale viene riportato verso il basso, ed è il valore che resta dopo questa operazione, indicato con $V_k$, a passare al passo successivo. Se lo spike non viene emesso, i due valori coincidono.
+
+L'operazione che segue lo spike si chiama reset, e ne esistono due varianti. Con un \emph{hard reset} il potenziale viene riportato a un valore fisso $V_{\mathrm{reset}}$,
+\begin{equation}
+\label{eq:hard_reset}
+V_k=(1-S_k)H_k+S_k V_{\mathrm{reset}},
+\end{equation}
+mentre un \emph{soft reset} si limita a sottrarre la soglia,
+\begin{equation}
+\label{eq:soft_reset}
+V_k=H_k-S_k V_{\mathrm{th}}.
+\end{equation}
+Se lo spike non c'è, cioè $S_k=0$, entrambe lasciano $V_k=H_k$. La differenza emerge quando il potenziale supera la soglia di un certo margine. Con soglia 1 e $H_k=1{,}3$, l'hard reset con $V_{\mathrm{reset}}=0$ riparte da zero e perde l'eccedenza di $0{,}3$, mentre il soft reset riparte da $0{,}3$ e la conserva per il passo successivo~\cite{han2020rmp}. Qui e nel seguito si adotta la convenzione con potenziale di riposo nullo, in cui anche $V_{\mathrm{reset}}$ vale zero.
+
+Il neurone IF ha una memoria perfetta. Al di fuori del reset, un contributo ricevuto all'inizio della sequenza pesa esattamente quanto uno appena arrivato, perché il modello non prevede alcuna forma di oblio.\\ 
+Il Leaky Integrate-and-Fire (LIF) introduce proprio questo elemento, una perdita o \emph{leak}. A ogni passo, prima di sommare il nuovo ingresso, il potenziale perde una frazione fissa del proprio valore,
+\begin{equation}
+\label{eq:lif_decadimento_discreto}
+H_k=\lambda V_{k-1}+\eta X_k,
+\qquad 0<\lambda<1.
+\end{equation}
+Il fattore di decadimento $\lambda$ indica quale frazione del potenziale sopravvive da un passo al successivo, e il coefficiente $\eta$ stabilisce quanto pesi l'ingresso. Con $\lambda=0{,}5$, in assenza di ingresso, il potenziale si dimezza a ogni passo. Il neurone IF si ritrova ponendo $\lambda=1$ ed $\eta=1$. Quando l'ingresso compare con coefficiente unitario, come nell'equazione~\eqref{eq:if_discreto}, si sottintende che $\eta$ sia già stato assorbito nella definizione di $X_k$ o nei pesi della rete.
+
+La perdita cambia in modo sostanziale il comportamento del neurone, come mostra la figura~\ref{fig:dinamica_lif}. Un neurone con soglia 1 riceve tre ingressi da $0{,}6$, una volta in tre passi consecutivi e una volta a tre passi di distanza l'uno dall'altro. Il neurone IF emette uno spike in entrambi i casi, non appena il secondo ingresso porta il potenziale a $1{,}2$. Il neurone LIF con $\lambda=0{,}5$ ed $\eta=1$, quando gli ingressi sono ravvicinati, sale a $0{,}6$, poi a $0{,}9$ e infine a $1{,}05$, e supera la soglia al terzo passo. Quando invece sono distanziati, tra un ingresso e l'altro il potenziale ha il tempo di scendere, non va mai oltre $0{,}68$ e lo spike non arriva. A parità di ingresso complessivo, il LIF risponde agli ingressi che arrivano vicini e lascia cadere quelli isolati, e si comporta in questo senso come un rilevatore di coincidenze.
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=\textwidth]{images/cap1/cap1_dinamica_lif.pdf}
+    \caption{Integrazione, soglia e soft reset in un neurone IF (tratteggio arancione) e in un neurone LIF con $\lambda=0{,}5$ (linea blu), entrambi con soglia $V_{\mathrm{th}}=1$. I due neuroni ricevono tre ingressi da $0{,}6$ (in basso), consecutivi in (a) e distanziati in (b). I marcatori indicano il potenziale $H_k$ appena caricato, i tratti verticali il soft reset che segue uno spike, la fila in alto gli spike emessi. Il neurone IF, che non dimentica, emette uno spike in entrambi i casi. Il LIF lo emette soltanto quando gli ingressi sono abbastanza ravvicinati da sommarsi prima che il potenziale decada.}
+    \label{fig:dinamica_lif}
+\end{figure}
+
+\subsection{Decadimento discreto e scala temporale fisica}
+\label{subsec:decadimento_scala_fisica}
+
+Il fattore $\lambda$ è definito per passo, mentre la memoria di un neurone, dal punto di vista della scena osservata, si misura in millisecondi. Per collegare le due cose bisogna risalire al modello da cui il LIF discende. Nella formulazione originale, a tempo continuo, la membrana si comporta come un condensatore che si scarica lentamente attraverso una resistenza,
 \begin{equation}
 \label{eq:lif_continuo}
 \tau_m\frac{\mathrm d V(t)}{\mathrm dt}
 =-\bigl(V(t)-V_{\mathrm{rest}}\bigr)+R I(t),
 \end{equation}
-dove $I(t)$ è la corrente d'ingresso, $R$ la resistenza di membrana e $\tau_m$ la costante temporale di membrana. Se l'ingresso si annulla e non vengono emessi spike, la soluzione è un rilassamento esponenziale,
+dove $I(t)$ è la corrente d'ingresso, $R$ la resistenza di membrana, $V_{\mathrm{rest}}$ il potenziale di riposo e $\tau_m$ la costante di tempo di membrana~\cite{gerstner2014neuronal}. Il primo termine a destra riporta il potenziale verso il riposo con una spinta proporzionale alla distanza, il secondo lo sposta in base all'ingresso. Se l'ingresso si annulla e non vengono emessi spike, il ritorno al riposo segue un'esponenziale,
 \begin{equation}
 \label{eq:lif_rilassamento}
 V(t)-V_{\mathrm{rest}}
 =\bigl(V(t_0)-V_{\mathrm{rest}}\bigr)
  \exp\left[-\frac{t-t_0}{\tau_m}\right].
 \end{equation}
-La costante $\tau_m$ ha dunque le dimensioni di un tempo e stabilisce la rapidità con cui il potenziale ritorna a riposo, e quindi con cui il neurone perde memoria degli ingressi ricevuti~\cite{gerstner2014neuronal}.
+Trascorso un tempo pari a $\tau_m$, la distanza dal riposo si è ridotta a circa il $37\%$ del valore iniziale, poiché $e^{-1}\approx0{,}37$. La costante $\tau_m$ misura dunque, in unità di tempo, per quanto il neurone ricorda un ingresso. La legge vale però soltanto al di sotto della soglia, perché ogni spike interrompe il decadimento con un reset.
 
-Resta da stabilire che cosa accada dopo uno spike. Con un \emph{hard reset} il potenziale viene riportato a un valore fisso $V_{\mathrm{reset}}$,
-\begin{equation}
-\label{eq:hard_reset}
-V_k=(1-S_k)H_k+S_k V_{\mathrm{reset}},
-\end{equation}
-mentre un \emph{soft reset}, nella convenzione con riferimento nullo, si limita a sottrarre la soglia,
-\begin{equation}
-\label{eq:soft_reset}
-V_k=H_k-S_k V_{\mathrm{th}}.
-\end{equation}
-Il secondo conserva nello stato l'eventuale eccedenza oltre la soglia, che il primo invece cancella. Il comportamento del neurone nasce quindi dall'interazione di integrazione, decadimento, soglia e reset, e la legge esponenziale descrive soltanto il regime al di sotto della soglia.
-
-\begin{figure}[htbp]
-    \centering
-    % \includegraphics[width=0.9\textwidth]{images/placeholder_fig2_3.pdf}
-    \rule{0.85\textwidth}{4.8cm} % Box segnaposto per Fig 2.3
-    \caption{Principio di integrazione temporale in un neurone Leaky Integrate-and-Fire. Gli ingressi modificano il potenziale di membrana, che decade verso il valore di riposo in assenza di nuova attività. Eventi sufficientemente ravvicinati possono sommarsi fino al superamento della soglia e alla generazione di uno spike.}
-    \label{fig:dinamica_lif}
-\end{figure}
-
-\subsection{Decadimento discreto e scala temporale fisica}
-
-Le reti spiking vengono simulate a passi discreti, e implementazioni diverse discretizzano la stessa dinamica in modi diversi. Per confrontarle conviene separare due coefficienti, quello che governa il decadimento dello stato e quello che scala l'ingresso. Con riferimento nullo, l'aggiornamento prima dello spike assume la forma generale
-\begin{equation}
-\label{eq:lif_decadimento_discreto}
-H_k=\lambda V_{k-1}+\eta X_k,
-\qquad 0<\lambda<1,
-\end{equation}
-dove $\lambda$ è il fattore di decadimento per passo ed $\eta$ pesa il contributo della corrente. Quando l'ingresso compare con coefficiente unitario, come nell'equazione~\eqref{eq:if_discreto}, si sottintende che $\eta$ sia già stato assorbito nella definizione di $X_k$ o nei pesi della rete.
-
-I due coefficienti si ricavano dalla dinamica continua. Se l'ingresso $X_k=R I_k$ resta costante per tutta la durata $\Delta t$ di un passo, l'integrazione esatta della dinamica lineare al di sotto della soglia fornisce
+Per simulare questa dinamica a passi di durata $\Delta t$ occorre discretizzarla, e il risultato ha proprio la forma dell'equazione~\eqref{eq:lif_decadimento_discreto}, con riferimento nullo. Il modo di discretizzare determina però i valori dei due coefficienti. Se l'ingresso $X_k=R I_k$ resta costante per tutta la durata del passo, l'equazione continua si può integrare esattamente, e si ottiene
 \begin{equation}
 \label{eq:lambda_tau}
 \lambda=\exp\left(-\frac{\Delta t}{\tau_m}\right),
 \qquad \eta=1-\lambda.
 \end{equation}
-Molte implementazioni adottano invece una discretizzazione di Eulero,
+Molte implementazioni, tra cui la libreria SpikingJelly~\cite{fang2023spikingjelly}, adottano invece la discretizzazione di Eulero, che sostituisce la derivata con un rapporto incrementale,
 \begin{equation}
 \label{eq:lif_euler_discreto}
 H_k=V_{k-1}+\frac{X_k-V_{k-1}}{\tau_d},
 \qquad
 \lambda=1-\frac1{\tau_d},\quad
-\eta=\frac1{\tau_d},
+\eta=\frac1{\tau_d}.
 \end{equation}
-in cui la costante $\tau_d>1$ è un numero puro, espresso in passi. Se la si interpreta come discretizzazione della stessa equazione continua vale $\tau_d=\tau_m/\Delta t$, ma il fattore di decadimento risultante approssima soltanto quello esponenziale. Ne consegue che uno stesso valore numerico, attribuito a $\tau_d$ oppure a $\tau_m$, descrive in generale due dinamiche diverse.
+Qui la costante $\tau_d$, che deve superare 1 perché $\lambda$ resti positivo, non è un tempo ma un numero puro, espresso in passi. Interpretandola come discretizzazione della stessa equazione continua vale $\tau_d=\tau_m/\Delta t$, ma le due regole non producono lo stesso decadimento. Con $\tau_m$ pari a due passi l'integrazione esatta dà $\lambda=e^{-1/2}\approx0{,}61$, mentre Eulero con $\tau_d=2$ dà $\lambda=0{,}5$, e dopo quattro passi senza ingresso resta circa il $14\%$ del potenziale nel primo caso e poco più del $6\%$ nel secondo. Quando un lavoro riporta una costante di tempo, quindi, il solo valore numerico non basta. Bisogna sapere se si tratti di un tempo fisico o di un numero di passi, e con quale discretizzazione venga usata.
 
-Srotolando la ricorrenza in assenza di spike e reset, con coefficienti costanti, si ottiene
+Srotolando la ricorrenza, cioè sostituendo a ritroso ogni potenziale con la sua espressione, si vede che cosa il neurone conservi della propria storia. In assenza di spike e reset, con coefficienti costanti, si ottiene
 \begin{equation}
 \label{eq:lif_espansione_temporale}
 V_k=\lambda^k V_0+
 \eta\sum_{j=1}^{k}\lambda^{k-j}X_j.
 \end{equation}
-Lo stato è quindi una combinazione pesata dell'intera storia, nella quale ogni ingresso conta tanto meno quanto più è lontano. Gli ingressi passati non vi compaiono però come osservazioni separate, ma fusi in un'unica somma.
+Il potenziale è la somma di tutti gli ingressi ricevuti, ciascuno moltiplicato per $\lambda$ tante volte quanti sono i passi trascorsi dal suo arrivo. Con $\lambda=0{,}5$, rispetto all'ingresso appena arrivato, quello del passo precedente pesa la metà, quello di tre passi prima un ottavo e quello di dieci passi prima meno di un millesimo. Gli ingressi passati, però, non vi compaiono come osservazioni separate. Sono fusi in un unico numero, e su questa proprietà si tornerà alla fine della sezione.
 
-Il legame con il clock dell'input diventa evidente se si esprime il decadimento per passo come una costante di tempo fisica equivalente,
+La stessa espressione suggerisce come tradurre $\lambda$ in un tempo fisico. Un ingresso arrivato $n$ passi prima, cioè $n\Delta t$ secondi prima, pesa $\lambda^n$. Cercando la costante $\tau_{\mathrm{eq}}$ per cui $\lambda^n=\exp(-n\Delta t/\tau_{\mathrm{eq}})$, come nel rilassamento continuo, si trova
 \begin{equation}
 \label{eq:tau_fisica_equivalente}
-\tau_{\mathrm{eq}}=-\frac{\Delta t}{\log\lambda}.
+\tau_{\mathrm{eq}}=-\frac{\Delta t}{\ln\lambda}.
 \end{equation}
-Dimezzando la durata dei bin senza modificare $\lambda$, anche $\tau_{\mathrm{eq}}$ si dimezza e il neurone dimentica due volte più in fretta in termini di tempo reale. Per conservare la stessa costante fisica occorrerebbe adeguare $\lambda$ al clock, ma nemmeno questo basterebbe a rendere equivalenti i due modelli, perché cambierebbero anche l'aggregazione e la scala degli ingressi e il numero di occasioni di firing e di reset. Con bin di durata variabile, infine, un coefficiente fisso per passo non corrisponde ad alcun decadimento uniforme nel tempo fisico.
+È la costante di tempo che un neurone continuo dovrebbe avere per dimenticare alla stessa velocità di quello discreto. Con $\lambda=0{,}5$ vale circa $1{,}44\,\Delta t$, quindi poco più di $14\,\mathrm{ms}$ con bin da $10\,\mathrm{ms}$ e poco più di $140\,\mathrm{ms}$ con bin da $100\,\mathrm{ms}$.
 
-Queste relazioni descrivono un singolo integratore lineare. La memoria di una rete, che combina molti neuroni, trasformazioni apprese e interazioni tra strati, non ha un orizzonte massimo così rigidamente definito.
+Il punto essenziale è che $\tau_{\mathrm{eq}}$ dipende dalla durata del bin, cioè dal clock dell'input. Lo stesso neurone, con lo stesso $\lambda$, dimentica due volte più in fretta in tempo reale se la durata dei bin si dimezza. Per conservare la stessa memoria fisica bisognerebbe adeguare $\lambda$ al clock. Nemmeno questo, però, renderebbe equivalenti i due modelli, perché cambiando i bin cambiano anche i conteggi che ciascuno contiene, la scala degli ingressi e il numero di occasioni in cui il neurone può emettere spike ed essere resettato. Con bin di durata variabile, come nelle partizioni a eventi costanti, un coefficiente fisso per passo non corrisponde infine ad alcun decadimento uniforme nel tempo fisico. Un passo lungo mezzo secondo e uno lungo cinque millisecondi fanno perdere al potenziale la stessa frazione. In alcuni modelli $\lambda$ è un parametro appreso, diverso da strato a strato~\cite{fang2021plif}, ma il legame con il clock resta lo stesso.
+
+Queste relazioni descrivono un singolo neurone isolato, al di sotto della soglia. La memoria di una rete, che combina molti neuroni, trasformazioni apprese e interazioni tra strati, non ha un orizzonte massimo così rigidamente definito. Il singolo integratore resta però il mattone elementare da cui quella memoria è costruita.
 
 \subsection{Addestramento con surrogate gradient}
+\label{subsec:surrogate_gradient}
 
-La soglia che genera gli spike pone un ostacolo all'addestramento mediante retropropagazione dell'errore. La funzione $\Theta$ è costante a tratti, la sua derivata è nulla quasi ovunque e non è definita nell'origine, sicché nessun segnale di errore riesce ad attraversarla. I \emph{surrogate gradient} aggirano il problema con un compromesso. Durante il passaggio in avanti (forward pass) lo spike resta discreto, mentre nel passaggio all'indietro (backward pass) la sua derivata viene sostituita da una funzione regolare~\cite{neftci2019surrogate},
+Le reti neurali si addestrano con la retropropagazione dell'errore, che calcola per ogni peso di quanto cambierebbe la loss modificandolo di poco, e lo corregge di conseguenza. La soglia che genera gli spike rende questo calcolo inutilizzabile. La funzione $\Theta$ è piatta ovunque tranne che nell'origine, dove salta da 0 a 1. Se il potenziale cambia di poco lo spike resta quello che era, e la derivata è quindi nulla quasi ovunque, mentre nell'unico punto in cui lo spike cambia la derivata non è definita. In entrambi i casi nessun segnale di errore riesce ad attraversare la soglia e a raggiungere i pesi degli strati precedenti.
+
+I \emph{surrogate gradient} aggirano l'ostacolo con un compromesso~\cite{neftci2019surrogate}. Nel passaggio in avanti (forward pass), quello che produce le uscite della rete, lo spike resta esattamente quello dell'equazione~\eqref{eq:if_spike}. Nel passaggio all'indietro (backward pass), quello che calcola i gradienti, la sua derivata viene sostituita da una funzione regolare,
 \begin{equation}
 \label{eq:surrogate_backward}
 \left.\frac{\partial S_k}{\partial H_k}\right|_{\mathrm{backward}}
 :=g_\alpha(H_k-V_{\mathrm{th}}).
 \end{equation}
-Per esempio, dalla sigmoide $\sigma(u)=(1+e^{-u})^{-1}$ si ottiene
+Una scelta diffusa è la derivata di una sigmoide. Con $\sigma(u)=(1+e^{-u})^{-1}$ si pone
 \begin{equation}
 \label{eq:surrogate_sigmoide}
 g_\alpha(z)=\alpha\,\sigma(\alpha z)
                     \bigl[1-\sigma(\alpha z)\bigr],
 \qquad \alpha>0,
 \end{equation}
-dove $\alpha$ controlla quanto il gradiente sia intenso e concentrato in prossimità della soglia. La sostituzione fornisce all'ottimizzatore un gradiente utilizzabile, senza rendere per questo differenziabile la funzione di soglia originale.
+che è proprio la derivata di $\sigma(\alpha z)$. In pratica la rete calcola gli spike con il gradino ma, al momento di calcolare i gradienti, si comporta come se il gradino fosse stato una sigmoide (figura~\ref{fig:surrogate_gradient_schema}).
 
-\begin{figure}[htbp]
+Il parametro $\alpha$ regola la ripidità della sigmoide, e quindi l'altezza e la larghezza del gradiente surrogato. La funzione $g_\alpha$ raggiunge il massimo, pari ad $\alpha/4$, sulla soglia e si annulla rapidamente allontanandosene. Con $\alpha=4$ vale 1 quando il potenziale è esattamente sulla soglia ed è già inferiore a $0{,}1$ a distanza 1. Ricevono quindi un gradiente apprezzabile soltanto i neuroni il cui potenziale era vicino alla soglia, quelli cioè per cui una piccola modifica dei pesi avrebbe potuto cambiare la decisione di emettere o meno lo spike. Un $\alpha$ più grande avvicina la surrogata al gradino ma concentra il gradiente su pochi neuroni, uno più piccolo lo distribuisce su un intervallo più ampio a prezzo di un'approssimazione più grossolana. In ogni caso la sostituzione fornisce all'ottimizzatore un gradiente utilizzabile senza rendere differenziabile la funzione di soglia originale.
+
+\begin{figure}[t]
     \centering
-    % \includegraphics[width=0.9\textwidth]{images/placeholder_fig2_4.pdf}
-    \rule{0.85\textwidth}{4.5cm} % Box segnaposto per Fig 2.4
-    \caption{Principio del surrogate gradient. La funzione di firing discreta viene mantenuta nel forward pass, mentre durante la retropropagazione la sua derivata viene sostituita da un'approssimazione continua non nulla in prossimità della soglia.}
+    \includegraphics[width=\textwidth]{images/cap1/cap1_surrogata.pdf}
+    \caption{Principio del surrogate gradient, in funzione della distanza $z=H_k-V_{\mathrm{th}}$ tra potenziale e soglia. (a)~Nel passaggio in avanti lo spike è prodotto dal gradino $\Theta$ (linea nera). La sigmoide $\sigma(4z)$ (tratteggio) non viene mai calcolata, ma è la funzione di cui il passaggio all'indietro usa la derivata. (b)~La derivata del gradino è nulla ovunque tranne nell'origine, dove non è definita (freccia), e non trasmette alcun gradiente. La surrogata $g_\alpha$ la sostituisce con una campana centrata sulla soglia, tanto più alta e stretta quanto maggiore è $\alpha$. Il valore evidenziato, $\alpha=4$, è quello adottato in questo lavoro.}
     \label{fig:surrogate_gradient_schema}
 \end{figure}
 
-Poiché lo stato collega i passi tra loro, il gradiente deve attraversare anche la dimensione temporale. La Backpropagation Through Time (BPTT) srotola la ricorrenza in una catena di copie della rete, una per ciascun passo, che condividono gli stessi parametri. L'errore si propaga così in due direzioni, attraverso gli strati e all'indietro nel tempo~\cite{wu2018spatiotemporal}. Si indichino con $J_{k+1}=\partial h_{k+1}/\partial h_k$ lo Jacobiano della transizione, che misura quanto lo stato successivo sia sensibile a quello corrente, e con $\boldsymbol g_k$ il contributo diretto della loss allo stato $h_k$. Il gradiente $\boldsymbol\delta_k$ accumulato sullo stato soddisfa allora la ricorrenza retrograda
+La soglia non è l'unico ostacolo. Poiché il potenziale collega ogni passo al successivo, la loss dipende dai pesi anche attraverso il tempo, e il gradiente deve percorrere la sequenza a ritroso. La Backpropagation Through Time (BPTT) affronta il problema srotolando la ricorrenza~\cite{wu2018spatiotemporal}. La rete viene vista come una catena di $T$ copie di sé stessa, una per ciascun passo, che condividono gli stessi pesi e sono collegate dagli stati che ciascuna passa alla successiva. Su questa catena, che non contiene più cicli, la retropropagazione ordinaria si applica senza difficoltà, e l'errore si propaga in due direzioni, attraverso gli strati e all'indietro nel tempo.
+
+Per seguire il gradiente lungo il tempo si indichino con $J_{k+1}=\partial h_{k+1}/\partial h_k$ lo Jacobiano della transizione, che misura quanto lo stato successivo sia sensibile a quello corrente, e con $\boldsymbol g_k$ il contributo diretto della loss allo stato $h_k$. Il gradiente $\boldsymbol\delta_k$ accumulato sullo stato soddisfa allora la ricorrenza
 \begin{equation}
 \label{eq:bptt_gradiente}
 \boldsymbol\delta_k
 =\boldsymbol g_k+J_{k+1}^{\top}\boldsymbol\delta_{k+1},
 \end{equation}
-che parte dall'ultimo passo con $\boldsymbol\delta_T=\boldsymbol g_T$. Ogni passo riceve quindi il proprio contributo diretto più quanto gli viene restituito dal futuro attraverso la transizione. Nel calcolo effettivo gli Jacobiani contengono le derivate surrogate. Anche l'eventuale esclusione del reset dal calcolo del gradiente va dichiarata, perché è una scelta distinta dall'operazione di reset eseguita nel forward pass.
+che si calcola dall'ultimo passo verso il primo, a partire da $\boldsymbol\delta_T=\boldsymbol g_T$. Lo stato al passo $k$ riceve dunque due segnali d'errore, quello che la loss gli attribuisce direttamente e quello che torna indietro dal passo successivo, che $h_k$ ha contribuito a determinare. Nel calcolo effettivo gli Jacobiani contengono le derivate surrogate.
 
-Il prezzo della BPTT è la memoria. Per eseguire il passaggio all'indietro occorre conservare le attivazioni di tutti i passi, e per $N_l$ unità nello strato $l$ il solo stato neuronale memorizzato lungo $T$ passi cresce come
+Un caso semplice rende visibile la conseguenza. Molte implementazioni escludono il termine di reset dal calcolo del gradiente, trattandolo come una costante. Il reset viene eseguito normalmente nel passaggio in avanti, e il neurone si comporta esattamente come prima, ma nel passaggio all'indietro il potenziale successivo dipende da quello corrente soltanto attraverso il termine $\lambda V_k$. Per un singolo neurone LIF lo Jacobiano si riduce allora al fattore $\lambda$, e un errore che nasce $n$ passi più avanti arriva al passo $k$ moltiplicato per $\lambda^n$, lo stesso fattore con cui il neurone dimentica. Un neurone che dimentica in fretta, in altre parole, impara poco dalle conseguenze lontane dei propri stati. È una forma del più generale problema della scomparsa del gradiente nelle reti ricorrenti~\cite{pascanu2013difficulty}, e un collegamento esplicito tra istanti distanti, come i ritardi discussi nella sezione~\ref{sec:strategie_modellazione_temporale}, offre anche al gradiente una strada più breve. La scelta di escludere o meno il reset dal gradiente non cambia dunque il comportamento della rete in inferenza, ma cambia il modo in cui viene addestrata, e va dichiarata.
+
+Il prezzo della BPTT è la memoria. Per percorrere la catena all'indietro servono i valori calcolati in avanti in ogni passo, che vanno quindi conservati fino alla fine della sequenza. Per $N_l$ unità nello strato $l$, il solo stato neuronale da memorizzare lungo $T$ passi cresce come
 \begin{equation}
 \label{eq:memoria_bptt}
 \mathcal O\left(T\sum_l N_l\right),
 \end{equation}
-a cui si sommano le altre attivazioni del grafo di calcolo~\cite{neftci2019surrogate}. Questa memoria di addestramento va tenuta distinta dallo stato persistente che serve in inferenza per avanzare da un passo al successivo. Un modello può richiedere pochissimo stato durante l'esecuzione e, al tempo stesso, un grafo molto esteso durante l'ottimizzazione.
+a cui si sommano le altre attivazioni del grafo di calcolo~\cite{neftci2019surrogate}. Raddoppiare la lunghezza delle sequenze raddoppia quindi la memoria richiesta dall'addestramento. In inferenza la situazione è molto diversa. Per avanzare di un passo, a una rete di soli neuroni LIF basta conoscere il potenziale attuale di ciascun neurone, cioè $\sum_l N_l$ valori in tutto, qualunque sia $T$. Le due grandezze vanno tenute distinte, perché un modello può richiedere pochissimo stato durante l'esecuzione e, al tempo stesso, un grafo molto esteso durante l'ottimizzazione.
 
-In questo lavoro la rete spiking viene addestrata direttamente. Si tratta di un paradigma diverso dalla conversione ANN-SNN, in cui una rete convenzionale viene prima addestrata e poi approssimata mediante spike. La dinamica discreta, la funzione surrogata e il trattamento del reset effettivamente adottati saranno specificati nella metodologia.
+In questo lavoro la rete spiking viene addestrata direttamente, con surrogate gradient e BPTT. È un paradigma diverso dalla conversione ANN-SNN, in cui una rete convenzionale viene prima addestrata e poi tradotta in una rete spiking che ne approssima le attivazioni con la frequenza degli spike. La dinamica discreta, la funzione surrogata e il trattamento del reset effettivamente adottati sono specificati nella sezione~\ref{subsec:neurone_convenzioni}.
 
 \subsection{Memoria neuronale e relazioni tra feature}
+\label{subsec:memoria_relazioni}
 
-Per un neurone LIF privo di ulteriori stati sinaptici, tutto ciò che la storia può trasmettere al futuro attraverso la membrana si riduce a un unico valore, il potenziale $V_k$,
+Si torni all'equazione~\eqref{eq:lif_espansione_temporale}. Per un neurone LIF privo di ulteriori stati interni, tutto ciò che la storia degli ingressi può trasmettere al futuro passa per un unico numero, il potenziale $V_k$,
 \begin{equation}
 \label{eq:mappa_compressione_stato}
 (X_1,\ldots,X_k)\longrightarrow V_k.
 \end{equation}
-Due storie diverse che conducano allo stesso potenziale diventano indistinguibili per quel neurone, se gli ingressi successivi coincidono. La rete nel suo complesso può comunque conservarne la differenza in altre unità o in altri moduli, sicché la compressione operata da un singolo potenziale non implica di per sé una perdita equivalente a livello dell'intera rappresentazione.
+L'intera sequenza viene compressa in un solo valore, e storie diverse possono lasciare lo stesso potenziale. Con $\lambda=0{,}5$ ed $\eta=1$, partendo da un potenziale nullo, un ingresso pari a $0{,}4$ arrivato al passo precedente e un ingresso pari a $0{,}2$ arrivato adesso lasciano entrambi $V_k=0{,}2$. Da quel momento, se gli ingressi successivi coincidono, il neurone si comporta in modo identico nei due casi, e non ha più modo di sapere se abbia visto qualcosa di intenso poco fa o qualcosa di debole in questo istante. La rete nel suo complesso può comunque conservare la differenza in altre unità o in altri moduli, sicché la compressione operata da un singolo potenziale non implica di per sé una perdita equivalente a livello dell'intera rete.
 
-Si delineano così due capacità diverse. Una cosa è conservare una sintesi ricorrente del passato, altra è poter accedere separatamente alle rappresentazioni di istanti diversi. Allungare la costante di decadimento rende più persistenti i contributi passati, ma non li rende interrogabili come feature distinte. Un'avvertenza analoga riguarda la causalità. Che ogni singola transizione dipenda soltanto dal passato non garantisce che lo faccia l'intera rete, poiché operazioni come una normalizzazione calcolata su più timestep possono introdurre una dipendenza dal futuro e vanno verificate a parte.
+Si delineano così due capacità diverse. La prima è la \emph{persistenza}, cioè la capacità di conservare a lungo una traccia del passato. La seconda è l'\emph{accesso}, cioè la possibilità di recuperare separatamente ciò che è accaduto in un istante preciso per confrontarlo con il presente. Si potrebbe pensare di migliorare la memoria di un neurone avvicinando $\lambda$ a 1, ma la modifica agisce soltanto sulla prima. I contributi passati sopravvivono più a lungo, e proprio per questo un numero maggiore di ingressi si mescola nella stessa somma, che diventa ancora più difficile da scomporre. Si pensi alla barra della sezione~\ref{subsec:contrasto_eventi}, la cui direzione è scritta nell'ordine con cui si attivano pixel vicini. Per riconoscerla non basta sapere che entrambi i pixel sono stati attivi di recente, informazione che un potenziale conserva bene. Bisogna sapere quale dei due si è attivato prima, cioè mettere a confronto due istanti distinti, e un'unica somma pesata può farlo soltanto in modo indiretto.
 
-La distinzione tra persistenza e accesso motiva l'interesse per operatori capaci di combinare o confrontare esplicitamente le feature disponibili. La sezione successiva descrive come l'attenzione sia stata integrata nelle architetture spiking, e sarà allora necessario distinguere le relazioni costruite all'interno di uno stesso timestep da quelle che collegano istanti diversi.
+Un'ultima avvertenza riguarda la causalità. Che ogni neurone dipenda soltanto dal proprio passato non garantisce che lo faccia l'intera rete. Se una normalizzazione calcola le proprie statistiche su tutti i passi della sequenza, come accade spesso durante l'addestramento, il valore normalizzato a un passo dipende anche dai passi successivi. Il caso della rete usata in questo lavoro è discusso nella sezione~\ref{subsec:microbatch_bn}.
+
+La distinzione tra persistenza e accesso motiva l'interesse per operatori capaci di combinare o confrontare esplicitamente feature diverse. La sezione successiva descrive come l'attenzione sia stata integrata nelle architetture spiking, e sarà allora necessario distinguere le relazioni costruite all'interno di uno stesso passo da quelle che collegano istanti diversi.
 
 
 % ==============================================================================
