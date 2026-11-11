@@ -44,7 +44,7 @@ Il modulo proposto in questo capitolo trasferisce lo stesso schema dai pixel all
     \centering
     % \includegraphics[width=0.95\textwidth]{images/cap5/placeholder_cap5_fig1.pdf}
     \rule{0.9\textwidth}{5.2cm} % Box segnaposto per Fig. 5.1
-    \caption{Dal richiamo al confronto. (a)~Il mixer a ritardi del modello di riferimento proietta le correnti di alcuni passi precedenti e le somma alla corrente presente, sicché passato e presente contribuiscono in modo indipendente. (b)~Il rilevatore di correlazione di Hassenstein e Reichardt moltiplica il segnale ritardato di un recettore per quello istantaneo dell'altro e sottrae il prodotto speculare, ottenendo una risposta il cui segno dipende dal verso del moto. (c)~Il mixer proposto riassume il passato in bande, lo richiama linearmente e lo confronta con il presente attraverso due proiezioni apprese, con un ruolo analogo a quello dei due recettori.}
+    \caption[Dal richiamo al confronto]{Dal richiamo al confronto. (a)~Il mixer a ritardi del modello di riferimento proietta le correnti di alcuni passi precedenti e le somma alla corrente presente, sicché passato e presente contribuiscono in modo indipendente. (b)~Il rilevatore di correlazione di Hassenstein e Reichardt moltiplica il segnale ritardato di un recettore per quello istantaneo dell'altro e sottrae il prodotto speculare, ottenendo una risposta il cui segno dipende dal verso del moto. (c)~Il mixer proposto riassume il passato in bande, lo richiama linearmente e lo confronta con il presente attraverso due proiezioni apprese, con un ruolo analogo a quello dei due recettori.}
     \label{fig:richiamo_confronto}
 \end{figure}
 
@@ -87,13 +87,13 @@ Le bande coprono senza sovrapposizioni tutti i ritardi da 1 a $d_K$, il presente
 \begin{figure}[tbp]
     \centering
     \includegraphics[width=\textwidth]{images/cap5/cap5_bande.pdf}
-    \caption{Ritardi del mixer a ritardi e bande della memoria a intervalli, in tempo fisico, con la rappresentazione a lunghezza variabile. I cerchi indicano i quattro ritardi letti dal mixer, i trattini grigi tutti i passi del passato fino al ritardo massimo. Le bande, delimitate dagli stessi ritardi, coprono senza lacune l'intero orizzonte e si allargano allontanandosi dal presente. A destra, quanti dei passi del passato vengono letti dal mixer a ritardi.}
+    \caption[Ritardi e bande della memoria a intervalli]{Ritardi del mixer a ritardi e bande della memoria a intervalli, in tempo fisico, con la rappresentazione a lunghezza variabile. I cerchi indicano i quattro ritardi letti dal mixer, i trattini grigi tutti i passi del passato fino al ritardo massimo. Le bande, delimitate dagli stessi ritardi, coprono senza lacune l'intero orizzonte e si allargano allontanandosi dal presente. A destra, quanti dei passi del passato vengono letti dal mixer a ritardi.}
     \label{fig:bande}
 \end{figure}
 
 Le bande si allargano allontanandosi dal presente. Il passato recente è descritto con la risoluzione di uno o due passi, quello più remoto con medie su otto o dodici passi. È una forma rudimentale di compressione del tempo, in cui la precisione con cui un evento viene collocato diminuisce con la sua distanza, vicina nello spirito alle rappresentazioni a scala logaritmica proposte per la memoria temporale~\cite{shankar2012scale}. Un'alternativa sarebbe lasciare che la rete apprenda la posizione dei ritardi, come avviene in alcune SNN dotate di ritardi sinaptici apprendibili~\cite{hammouamri2024learning}. Qui si è preferito conservare i bordi del modello di riferimento, così che memoria a punti e memoria a bande coprano esattamente lo stesso orizzonte.
 
-\subsection{Medie sulla storia disponibile}
+\paragraph{Medie sulla storia disponibile}
 \label{subsec:medie_disponibili}
 
 All'interno di ciascuna banda il passato viene riassunto dalla media delle correnti. All'inizio della sequenza, però, una banda può essere vuota o soltanto in parte riempita, perché i passi corrispondenti precederebbero il primo evento. Indicando con $J_{k,t}=\{\ell\in I_k\mid \ell\le t\}$ i ritardi della banda effettivamente osservati al passo $t$, contato a partire da zero, e con $n_{k,t}=|J_{k,t}|$ il loro numero, il riassunto è
@@ -119,7 +119,7 @@ Il fenomeno non è marginale (figura~\ref{fig:disponibilita}). Con le lunghezze 
 \begin{figure}[tbp]
     \centering
     \includegraphics[width=\textwidth]{images/cap5/cap5_disponibilita.pdf}
-    \caption{Storia disponibile nella memoria a intervalli. (a)~Le bande di DVS-Lip al passo $t=5$, vicino all'inizio della sequenza, e al passo $t=30$, a regime. I passi tratteggiati precedono il primo evento e non esistono. Sopra e sotto ciascuna banda, il numero di passi osservati rispetto alla sua larghezza. (b)~Frazione dei passi della validazione di sviluppo in cui ciascuna banda dispone di una storia completa e, in piccolo, frazione in cui è del tutto vuota.}
+    \caption[Storia disponibile nella memoria a intervalli]{Storia disponibile nella memoria a intervalli. (a)~Le bande di DVS-Lip al passo $t=5$, vicino all'inizio della sequenza, e al passo $t=30$, a regime. I passi tratteggiati precedono il primo evento e non esistono. Sopra e sotto ciascuna banda, il numero di passi osservati rispetto alla sua larghezza. (b)~Frazione dei passi della validazione di sviluppo in cui ciascuna banda dispone di una storia completa e, in piccolo, frazione in cui è del tutto vuota.}
     \label{fig:disponibilita}
 \end{figure}
 
