@@ -1,9 +1,17 @@
 \chapter{Memoria temporale relazionale}
 \label{chap:memoria_relazionale}
 
-% Stato al 2026-11-04: scritte l'introduzione e le sezioni 5.1-5.2. Le sezioni successive
-% (interazione bilineare antisimmetrica, scomposizione del contributo, controlli di capacità e
-% trasferimento, tracce relazionali, sintesi) attendono la conclusione della campagna.
+% Stato al 2026-11-17: struttura da docs/STRUTTURA_NARRATIVA_E_RISULTATI_CAPITOLI_5_6_7.md, capitolo completo (5.1-5.7).
+% Valori PROVVISORI su DVS-Lip in 5.5 e 5.7 (checkpoint IRM 20261026_112001): aggiornare con le valutazioni sul
+% checkpoint di riferimento 20261112_082513 (sweep di compressione, diagnostiche sul test, interventi sulle bande).
+% Numeri e confronti appaiati da figure_scripts/cap5/risultati5.py. Su DVS-Lip l'IRM antisimmetrico di riferimento e'
+% VC_RI_M--interval-antisymmetric-r16__20261112_082513_589585__seed42 (Macro-F1 57,47), addestrato nelle stesse condizioni
+% del modello di riferimento e dei controlli. Nel testo non si menzionano altri addestramenti della stessa configurazione.
+% Il capitolo presenta soltanto DVS-Lip e THU-EACT-50-CHL; Gesture e CIFAR10-DVS sono esclusi per scelta.
+% Scaletta e numeri: docs/STRUTTURA_NARRATIVA_E_RISULTATI_CAPITOLI_5_6_7.md (repository di ricerca, 17/11/2026).
+% Relazione verificata in src/etsr/models/interval.py: r = (A m)(B z) -/+ (B m)(A z), A,B in R^{16x128} condivise,
+% U_k (relation_weight) inizializzate a zero, buffer con corrente e proiezioni (C + 2r valori per passo).
+% Wang et al. (arXiv 2610.37823, 27/10/2026) verificato sulla pagina dell'abstract.
 %
 % Fonti verificate sul repository temporal-event-spiking-research (commit 5a03fec):
 % src/etsr/models/interval.py (CausalIntervalChannelMixer), temporal.py (CMLCM, init a zero),
@@ -11,11 +19,13 @@
 % docs/TCAP_RELAZIONALE_INTERVALI.md, docs/EVOLUZIONE_DELLA_SPERIMENTAZIONE_DETTAGLIATA.md par. 13.
 % Run citati: dvslip/VC_RI_M--interval-linear__20261026_110201_907982__seed42 (54,67 F1),
 % thu_eact_50_chl/VC_RI_M--interval-linear__20261026_153644_696468__seed42 (54,44 F1),
-% riferimenti VC del Capitolo 4. Figure: figure_scripts/cap5.
+% riferimenti VC del Capitolo 4. Figure: figure_scripts/cap5 (fig_richiamo_confronto, fig_bande, fig_disponibilita, fig_relazione).
 
 Con il clock fissato nel capitolo precedente, ogni passo ha una durata fisica nota, e i ritardi del mixer temporale corrispondono a distanze precise nel passato. Questo capitolo si chiede come usare meglio quella memoria. La domanda non riguarda quanto passato conservare, ma che cosa farne quando lo si mette accanto al presente.
 
-Il punto di partenza è il modo in cui il modello di riferimento tratta il passato. Il mixer a ritardi lo richiama e lo somma al presente, ma non li confronta mai direttamente. Il capitolo propone un modulo che separa il problema in tre parti, che cosa del passato conservare, quanto di quel passato esista davvero e come confrontarlo con il presente, e le affronta nell'ordine. Per tutto il capitolo l'ingresso è la rappresentazione a lunghezza variabile, e il termine di confronto è il modello di riferimento addestrato con essa, con una Macro-F1 di $56{,}85$ su DVS-Lip, $94{,}23$ su DVS128 Gesture, $69{,}36$ su CIFAR10-DVS e $54{,}93$ su THU-EACT-50-CHL (sezione~\ref{sec:conseguenze_clock}).
+Il punto di partenza è il modo in cui il modello di riferimento tratta il passato. Il mixer a ritardi lo richiama e lo somma al presente, ma non li confronta mai direttamente. Il capitolo propone un modulo che separa il problema in tre parti, che cosa del passato conservare, quanto di quel passato esista davvero e come confrontarlo con il presente, e le affronta nell'ordine. Seguono i risultati, con i controlli che ne verificano l'origine, le alternative che delimitano le scelte del modulo e, infine, il suo costo e la sua compressione. Per tutto il capitolo l'ingresso è la rappresentazione a lunghezza variabile, e il termine di confronto è il modello di riferimento addestrato con essa (tabella~\ref{tab:risultati_clock}).
+
+Gli esperimenti si concentrano su DVS-Lip e THU-EACT-50-CHL. Il capitolo~\ref{chap:clock_input} ha mostrato che su DVS128 Gesture il principale problema temporale, il verso delle rotazioni, viene già risolto dal clock, e su CIFAR10-DVS la dinamica è imposta dall'acquisizione. Su questi due dataset la memoria della rete ha poco da aggiungere, e nelle prove svolte le varianti del capitolo non si distinguono dal riferimento. La lettura labiale e il riconoscimento di azioni sono invece compiti in cui la struttura temporale del segnale conta davvero, ed è su di essi che conviene misurare una memoria.
 
 
 % ==============================================================================
@@ -25,9 +35,11 @@ Il punto di partenza è il modo in cui il modello di riferimento tratta il passa
 \section{Dal richiamo del passato al confronto tra passato e presente}
 \label{sec:richiamo_confronto}
 
-Nel modello di riferimento il passato entra nella corrente di uno strato attraverso il mixer causale a più ritardi dell'equazione~\eqref{eq:cmlcm_richiamo}. A ogni passo il mixer rilegge le correnti di alcuni passi precedenti, le trasforma con una matrice per ciascun ritardo e le somma alla corrente presente. Si tratta, a tutti gli effetti, di un'operazione di richiamo. Il passato viene riportato nel presente, e il neurone che segue integra il risultato insieme a tutto il resto.
+Nel modello di riferimento il passato entra nella corrente di uno strato attraverso il mixer causale a più ritardi dell'equazione~\eqref{eq:cmlcm}. A ogni passo il mixer rilegge le correnti di alcuni passi precedenti, le trasforma con una matrice per ciascun ritardo e le somma alla corrente presente. Si tratta, a tutti gli effetti, di un'operazione di richiamo. Il passato viene riportato nel presente, e il neurone che segue integra il risultato insieme a tutto il resto.
 
 La forma della somma ha una conseguenza precisa. Ogni termine dipende da un solo istante, $z_t$ dal presente e $W_kz_{t-d_k}$ dal passato a distanza $d_k$, e il contributo di ciascuno resta lo stesso qualunque cosa contengano gli altri. Il mixer è additivamente separabile nel tempo. Una relazione tra passato e presente, come il fatto che una certa configurazione delle feature ne segua un'altra, non viene mai calcolata in modo esplicito. Può emergere soltanto più avanti, dalla soglia del neurone, che reagisce quando più contributi si sommano oltre il valore critico, oppure dagli strati successivi. Il mixer mette a disposizione il passato e lascia ad altri il compito di confrontarlo con il presente.
+
+Questo non significa che una somma sia cieca all'ordine. Poiché ogni ritardo ha una propria matrice, la sequenza «prima A, poi B» produce una corrente diversa da «prima B, poi A». L'ordine, però, resta legato alla distanza dal presente. La stessa coppia di eventi produce correnti diverse a seconda di quanto indietro si trovi, e per riconoscere che A precede B, ovunque accada, gli strati successivi devono imparare una lettura diversa per ogni distanza.
 
 Non è detto che questo sia un limite. Combinazioni lineari seguite da una soglia possono rappresentare, in linea di principio, molte relazioni, e una rete abbastanza grande è in grado di costruirle. In un regime compatto, però, ogni relazione che la rete deve ricavare implicitamente consuma capacità che potrebbe essere spesa altrove. L'idea di questo capitolo è rendere esplicito il confronto, con un termine che dipenda congiuntamente dal passato e dal presente.
 
@@ -38,13 +50,14 @@ R(t)=s_1(t-\delta)\,s_2(t)-s_2(t-\delta)\,s_1(t),
 \end{equation}
 dove $s_1$ e $s_2$ sono i segnali dei due recettori e $\delta$ il ritardo. Nelle sue varianti elaborate lo schema è equivalente ai modelli di energia del movimento, ed è ancora oggi un riferimento per i circuiti biologici che codificano la direzione~\cite{vansanten1985elaborated,borst2011seeing}. Due ingredienti lo distinguono da un semplice richiamo. Il prodotto rende la risposta dipendente dalla coincidenza di passato e presente, la sottrazione del termine speculare la rende sensibile all'ordine. Il capitolo precedente ha mostrato quanto l'ordine possa contare. Sulle rotazioni di DVS128 Gesture, perdere il verso del movimento bastava a confondere classi che per il resto erano identiche (sezione~\ref{subsec:aliasing}).
 
+Un lavoro recente, sviluppato in parallelo a questo, formalizza la stessa distinzione per le reti che elaborano eventi. Sostiene che nessuno strato additivo possa rappresentare in modo uniforme le interazioni ordinate tra coppie di istanti, a differenza di uno stato non commutativo, e propone a sua volta una generalizzazione apprendibile del correlatore di Hassenstein e Reichardt~\cite{wang2026learning}. Le due strade condividono l'intuizione di fondo, ma ne danno realizzazioni indipendenti e diverse.
+
 Il modulo proposto in questo capitolo trasferisce lo stesso schema dai pixel alle feature latenti (figura~\ref{fig:richiamo_confronto}). Il ruolo dei due recettori è affidato a due proiezioni apprese delle feature, quello del segnale ritardato a un riassunto del passato, e il confronto avviene in ogni posizione spaziale tra il presente e più riassunti a distanze diverse. L'analogia motiva il calcolo ma non ne garantisce l'interpretazione. Nulla obbliga i canali della rete a diventare rilevatori di movimento, e le proiezioni possono combinare feature dal significato molto diverso.
 
-\begin{figure}[tbp]
+\begin{figure}[t]
     \centering
-    % \includegraphics[width=0.95\textwidth]{images/cap5/placeholder_cap5_fig1.pdf}
-    \rule{0.9\textwidth}{5.2cm} % Box segnaposto per Fig. 5.1
-    \caption[Dal richiamo al confronto]{Dal richiamo al confronto. (a)~Il mixer a ritardi del modello di riferimento proietta le correnti di alcuni passi precedenti e le somma alla corrente presente, sicché passato e presente contribuiscono in modo indipendente. (b)~Il rilevatore di correlazione di Hassenstein e Reichardt moltiplica il segnale ritardato di un recettore per quello istantaneo dell'altro e sottrae il prodotto speculare, ottenendo una risposta il cui segno dipende dal verso del moto. (c)~Il mixer proposto riassume il passato in bande, lo richiama linearmente e lo confronta con il presente attraverso due proiezioni apprese, con un ruolo analogo a quello dei due recettori.}
+    \includegraphics[width=\textwidth]{images/cap5/cap5_richiamo_confronto.pdf}
+    \caption[Dal richiamo al confronto]{Dal richiamo al confronto. (a)~Il mixer a ritardi del modello di riferimento proietta le correnti di alcuni passi precedenti e le somma alla corrente presente, sicché passato e presente contribuiscono in modo indipendente. (b)~Il rilevatore di correlazione di Hassenstein e Reichardt moltiplica il segnale ritardato di un recettore per quello istantaneo dell'altro e sottrae il prodotto speculare, ottenendo una risposta il cui segno dipende dal verso del moto. (c)~Il mixer proposto riassume il passato in bande, lo richiama linearmente e lo confronta con il presente attraverso due proiezioni apprese, con un ruolo analogo a quello dei due recettori. Il contributo di ogni banda è pesato dalla storia disponibile.}
     \label{fig:richiamo_confronto}
 \end{figure}
 
@@ -59,7 +72,7 @@ u_t=z_t+\sum_{k=1}^{K}b_{k,t}\Bigl[W_k\,m_{k,t}+U_k\,\rho\bigl(m_{k,t},z_t\bigr)
 \end{equation}
 dove $z_t\in\mathbb R^{C}$ è la corrente dello strato al passo $t$ in una posizione spaziale, prima del neurone. Il vettore $m_{k,t}$ riassume il passato alla $k$-esima scala, il coefficiente $b_{k,t}$ tiene conto della storia disponibile, $W_km_{k,t}$ è il richiamo lineare, erede diretto del mixer a ritardi, e $\rho(m_{k,t},z_t)$ è una relazione tra passato e presente, riportata nello spazio delle feature dalla matrice $U_k$. Il modulo che ne risulta viene indicato nel seguito come \emph{interval-relational mixer} (IRM). Il nome descrive una combinazione di ingredienti noti e non rivendica un nuovo tipo di operatore.
 
-La forma separa tre domande che conviene tenere distinte. Che cosa del passato viene conservato, nel riassunto $m_{k,t}$. Quanto di quel passato esiste davvero, nel coefficiente $b_{k,t}$. Come il passato viene confrontato con il presente, nella relazione $\rho$. Ponendo $\rho=0$ si ottiene una memoria puramente lineare, che è a sua volta un controllo informativo, mentre cambiando la relazione a parità di tutto il resto si possono confrontare forme di interazione con proprietà diverse. La sezione~\ref{sec:memoria_intervalli} affronta le prime due domande, le sezioni successive la terza. % TODO: \ref alle sezioni sull'interazione bilineare e sui controlli
+La forma separa tre domande che conviene tenere distinte. Che cosa del passato viene conservato, nel riassunto $m_{k,t}$. Quanto di quel passato esiste davvero, nel coefficiente $b_{k,t}$. Come il passato viene confrontato con il presente, nella relazione $\rho$. Ponendo $\rho=0$ si ottiene una memoria puramente lineare, che è a sua volta un controllo informativo, mentre cambiando la relazione a parità di tutto il resto si possono confrontare forme di interazione con proprietà diverse. La sezione~\ref{sec:memoria_intervalli} affronta le prime due domande, la sezione~\ref{sec:relazione} la terza.
 
 Per attribuire l'effetto con chiarezza, l'IRM sostituisce il mixer a ritardi in un solo punto della rete, nel secondo patch embedding, sulla corrente della convoluzione con passo 2, dopo la batch normalization e prima del neurone. È una scelta di progetto. A quel livello la rappresentazione ha 128 canali a un sedicesimo della risoluzione d'ingresso, le feature sono più astratte di quelle del primo stadio e le posizioni sono poche, 64 per un ingresso di $128\times128$ pixel, sicché il costo del confronto resta contenuto. Il primo patch embedding conserva il mixer a ritardi, mentre SSA, MLP e readout restano invariati.
 
@@ -71,10 +84,9 @@ Per attribuire l'effetto con chiarezza, l'IRM sostituisce il mixer a ritardi in 
 \section{Memoria causale a intervalli e disponibilità della storia}
 \label{sec:memoria_intervalli}
 
-\subsection{Dai ritardi puntuali alle bande}
+\paragraph{Dai ritardi puntuali alle bande}
 \label{subsec:ritardi_bande}
-
-Il mixer a ritardi legge il passato in pochi punti. Con la rappresentazione a lunghezza variabile, su DVS-Lip i ritardi $(2,4,7,15)$ campionano 4 dei 15 passi che separano il presente dal ritardo massimo, e su DVS128 Gesture 4 su 24 (figura~\ref{fig:bande}). Ciò che accade nei passi intermedi raggiunge il mixer soltanto attraverso le altre vie della rete, in particolare la memoria dei neuroni. Una lettura così rada ha un difetto evidente. Un movimento che avviene un passo prima o un passo dopo cade fuori dal ritardo e sparisce dalla lettura, anche se la sua distanza fisica dal presente è quasi la stessa.
+Il mixer a ritardi legge il passato in pochi punti. Con la rappresentazione a lunghezza variabile, su DVS-Lip i ritardi $(2,4,7,15)$ campionano 4 dei 15 passi che separano il presente dal ritardo massimo, e su THU-EACT-50-CHL 4 su 23 (figura~\ref{fig:bande}). Ciò che accade nei passi intermedi raggiunge il mixer soltanto attraverso le altre vie della rete, in particolare la memoria dei neuroni. Una lettura così rada ha un difetto evidente. Un movimento che avviene un passo prima o un passo dopo cade fuori dal ritardo e sparisce dalla lettura, anche se la sua distanza fisica dal presente è quasi la stessa.
 
 La memoria a intervalli sostituisce i punti con bande contigue di ritardi. Conservando come bordi i ritardi del modello di riferimento, $d_0=0<d_1<\dots<d_K$, la $k$-esima banda raccoglie i ritardi
 \begin{equation}
@@ -84,7 +96,7 @@ I_k=\{\ell\in\mathbb N\mid d_{k-1}<\ell\le d_k\},
 \end{equation}
 Le bande coprono senza sovrapposizioni tutti i ritardi da 1 a $d_K$, il presente ne resta escluso e continua ad arrivare dal percorso diretto, e l'orizzonte complessivo coincide con quello del mixer a ritardi. Su DVS-Lip le bande sono $[1,2]$, $[3,4]$, $[5,7]$ e $[8,15]$, da circa $27$ a $411\,\mathrm{ms}$ nel passato. Su THU-EACT-50-CHL diventano $[1,3]$, $[4,6]$, $[7,11]$ e $[12,23]$, e arrivano a $1{,}6\,\mathrm{s}$.
 
-\begin{figure}[tbp]
+\begin{figure}[t]
     \centering
     \includegraphics[width=\textwidth]{images/cap5/cap5_bande.pdf}
     \caption[Ritardi e bande della memoria a intervalli]{Ritardi del mixer a ritardi e bande della memoria a intervalli, in tempo fisico, con la rappresentazione a lunghezza variabile. I cerchi indicano i quattro ritardi letti dal mixer, i trattini grigi tutti i passi del passato fino al ritardo massimo. Le bande, delimitate dagli stessi ritardi, coprono senza lacune l'intero orizzonte e si allargano allontanandosi dal presente. A destra, quanti dei passi del passato vengono letti dal mixer a ritardi.}
@@ -95,7 +107,6 @@ Le bande si allargano allontanandosi dal presente. Il passato recente è descrit
 
 \paragraph{Medie sulla storia disponibile}
 \label{subsec:medie_disponibili}
-
 All'interno di ciascuna banda il passato viene riassunto dalla media delle correnti. All'inizio della sequenza, però, una banda può essere vuota o soltanto in parte riempita, perché i passi corrispondenti precederebbero il primo evento. Indicando con $J_{k,t}=\{\ell\in I_k\mid \ell\le t\}$ i ritardi della banda effettivamente osservati al passo $t$, contato a partire da zero, e con $n_{k,t}=|J_{k,t}|$ il loro numero, il riassunto è
 \begin{equation}
 \label{eq:media_intervallo}
@@ -109,14 +120,13 @@ La media divide per la storia realmente disponibile e non per la larghezza nomin
 
 La media produce due effetti. Attenua il rumore e rende la memoria tollerante a piccoli spostamenti temporali, perché un movimento anticipato o ritardato di un passo resta quasi sempre nella stessa banda. Il prezzo è la perdita dell'ordine all'interno della banda, che la media rende invisibile. Le bande strette vicino al presente e il percorso diretto limitano il danno dove l'ordine fine conta di più, ma non lo annullano.
 
-\subsection{Quanta storia è davvero disponibile}
+\paragraph{Quanta storia è davvero disponibile}
 \label{subsec:storia_disponibile}
-
 Nel mixer a ritardi il passato mancante è rappresentato da zeri nel buffer. Poiché le proiezioni non hanno bias, uno zero produce una corrente nulla, e la scelta è innocua dal punto di vista numerico. Lascia però indistinguibili due situazioni molto diverse, una feature che vale davvero zero e un passato che non esiste ancora.
 
-Il fenomeno non è marginale (figura~\ref{fig:disponibilita}). Con le lunghezze della rappresentazione a lunghezza variabile, la banda più lontana dispone di una storia completa nel $62\%$ dei passi su DVS-Lip e nel $70\%$ su CIFAR10-DVS, ma soltanto nel $43\%$ su THU-EACT-50-CHL e nel $39\%$ su DVS128 Gesture, dove in un terzo dei passi la trova del tutto vuota. Quando il ritardo massimo supera la metà della lunghezza tipica della sequenza, come accade su questi due dataset, la memoria più lontana lavora più spesso a regime ridotto che a regime pieno.
+Il fenomeno non è marginale (figura~\ref{fig:disponibilita}). Con le lunghezze della rappresentazione a lunghezza variabile, la banda più lontana dispone di una storia completa nel $62\%$ dei passi su DVS-Lip, ma soltanto nel $43\%$ su THU-EACT-50-CHL, dove in quasi un terzo dei passi la trova del tutto vuota. Su questo dataset il ritardo massimo, 23 passi, supera la metà della lunghezza tipica di una sequenza, e la memoria più lontana lavora più spesso a regime ridotto che a regime pieno.
 
-\begin{figure}[tbp]
+\begin{figure}[t]
     \centering
     \includegraphics[width=\textwidth]{images/cap5/cap5_disponibilita.pdf}
     \caption[Storia disponibile nella memoria a intervalli]{Storia disponibile nella memoria a intervalli. (a)~Le bande di DVS-Lip al passo $t=5$, vicino all'inizio della sequenza, e al passo $t=30$, a regime. I passi tratteggiati precedono il primo evento e non esistono. Sopra e sotto ciascuna banda, il numero di passi osservati rispetto alla sua larghezza. (b)~Frazione dei passi della validazione di sviluppo in cui ciascuna banda dispone di una storia completa e, in piccolo, frazione in cui è del tutto vuota.}
@@ -134,22 +144,421 @@ Il coefficiente dipende soltanto dal tempo trascorso dall'inizio della sequenza,
 
 Con questo meccanismo la memoria tiene separate tre condizioni che sul piano numerico potrebbero confondersi, le stesse discusse a proposito dell'equazione~\eqref{eq:maschera_passi_validi}. Il passato che precede il primo evento non esiste e non entra nel conteggio. Un bin valido privo di eventi è un'osservazione di silenzio, partecipa alla media e contribuisce a $n_{k,t}$. Il padding introdotto dal batching, infine, non entra in alcun calcolo e non fa avanzare il conteggio.
 
-\subsection{Implementazione e costo}
+\paragraph{Implementazione e costo}
 \label{subsec:costo_memoria_intervalli}
-
 Il calcolo delle medie non richiede di sommare ogni volta tutti i passi di una banda. La memoria conserva le correnti degli ultimi $d_K$ passi, esattamente come il buffer del mixer a ritardi, e un contatore della storia disponibile per ciascun campione. Durante l'addestramento le somme di ogni banda si ottengono come differenze di somme cumulative lungo il tempo, sicché il costo per passo non dipende dalla larghezza delle bande. Rispetto al mixer a ritardi restano le stesse $K$ proiezioni $C\times C$ per posizione e passo, applicate ai riassunti anziché ai singoli punti. A queste si aggiungono, per ogni canale, una manciata di operazioni elementari per banda, tra sottrazioni, divisioni e coefficienti, contro le $KC$ moltiplicazioni e accumuli che ogni canale richiede alle proiezioni. Con $C=128$ il sovraccarico aritmetico resta di oltre un ordine di grandezza inferiore al costo delle proiezioni.
 
 Lo stato da conservare tra un passo e il successivo coincide con il buffer del mixer a ritardi nello stesso punto, $d_K\times C$ valori per posizione, più un contatore per campione. Su DVS-Lip, con $d_K=15$ e 64 posizioni, sono $122\,880$ valori per campione. Le formule sono verificate nel codice rispetto a una loro definizione letterale, insieme alla causalità del modulo e all'equivalenza tra l'elaborazione dell'intera sequenza, quella a blocchi e quella passo per passo. Come per il resto della rete, la causalità riguarda il modulo, perché durante l'addestramento la batch normalization aggrega passi diversi (sezione~\ref{subsec:microbatch_bn}).
 
-All'inizializzazione le matrici $W_k$ partono dagli stessi valori nulli del mixer a ritardi e i coefficienti di disponibilità valgono 1, sicché il modulo restituisce esattamente la corrente presente. Poiché anche il mixer a ritardi parte da matrici nulle, e i pesi condivisi vengono generati con lo stesso seed in un flusso pseudo-casuale separato da quello del nuovo modulo, la rete con la memoria a intervalli parte esattamente dalla stessa funzione del modello di riferimento.
+All'inizializzazione le matrici $W_k$ partono dagli stessi valori nulli del mixer a ritardi e i coefficienti di disponibilità valgono 1, sicché il modulo restituisce esattamente la corrente presente. Poiché anche il mixer a ritardi parte da matrici nulle, e i pesi condivisi vengono generati nello stesso modo, in un flusso pseudo-casuale separato da quello del nuovo modulo, la rete con la memoria a intervalli parte esattamente dalla stessa funzione del modello di riferimento.
 
-La memoria a intervalli, presa da sola, resta un richiamo. Offre un riassunto del passato più completo e più robusto dei punti isolati, e sa quanto di quel passato esista davvero, ma lo restituisce al presente come una somma. Anticipando un risultato discusso più avanti, questa sola modifica non migliora il modello di riferimento, né su DVS-Lip, dove la Macro-F1 passa da $56{,}85$ a $54{,}67$, né su THU-EACT-50-CHL, dove passa da $54{,}93$ a $54{,}44$, e la media delle ultime 16 epoche conferma lo stesso ordinamento. Riassumere meglio il passato non basta. Il passo successivo consiste nel confrontarlo con il presente. % TODO: \ref alla sezione sulla scomposizione del contributo
+La memoria a intervalli, presa da sola, resta un richiamo. Offre un riassunto del passato più completo e più robusto dei punti isolati, e sa quanto di quel passato esista davvero, ma lo restituisce al presente come una somma. Come mostrerà la sezione~\ref{sec:risultati_irm}, questa sola modifica non migliora il modello di riferimento su nessuno dei due dataset, e su DVS-Lip lo peggiora. Riassumere meglio il passato non basta. Il passo successivo consiste nel confrontarlo con il presente.
 
 % ==============================================================================
-%  Sezioni successive in attesa della conclusione della campagna
+%  Il confronto tra passato e presente
 % ==============================================================================
-% 5.3 Interazione bilineare antisimmetrica a basso rango (punto di inserimento, +12.296 parametri)
-% 5.4 Scomposizione del contributo (lineare, simmetrica, antisimmetrica, con router; punti contro bande)
-% 5.5 Controlli di capacità e trasferimento (identità, matched-MLP, gated CMLCM in VC)
-% 5.6 Persistenza appresa con tracce relazionali (RTM statico, sensor, latent, content)
-% 5.7 Sintesi e delimitazione del contributo
+
+\section{Il confronto tra passato e presente}
+\label{sec:relazione}
+
+La memoria a intervalli stabilisce che cosa del passato conservare e quanto ne esista davvero. Resta da decidere come confrontarlo con il presente, cioè la forma della relazione $\rho$ nell'equazione~\eqref{eq:irm_generale}. Le richieste sono tre. La relazione deve dipendere da passato e presente insieme, deve costare poco e deve distinguere l'ordine, rispondendo in modo diverso a «prima A, poi B» e a «prima B, poi A».
+
+\paragraph{Due proiezioni e un prodotto}
+La forma più semplice che soddisfa le prime due richieste è un prodotto elemento per elemento tra proiezioni a basso rango, una costruzione già diffusa per combinare due rappresentazioni con pochi parametri~\cite{kim2017hadamard}. Due matrici $A,B\in\mathbb R^{r\times C}$, con $r=16$, proiettano su $r$ componenti tanto il riassunto del passato quanto la corrente presente, e la relazione antisimmetrica è
+\begin{equation}
+\label{eq:relazione_antisimmetrica}
+\rho^{-}(m,z)=(Am)\odot(Bz)-(Bm)\odot(Az),
+\end{equation}
+dove $\odot$ indica il prodotto elemento per elemento e gli indici $k$ e $t$ sono omessi per leggibilità. La relazione simmetrica $\rho^{+}$, usata come controllo, ha il segno più. Come nel correlatore dell'equazione~\eqref{eq:reichardt}, ogni componente moltiplica il passato letto da una proiezione per il presente letto dall'altra, e sottrae il prodotto speculare. Le proiezioni $A$ e $B$ prendono il posto dei due recettori, la banda quello del ritardo. Scambiando passato e presente la relazione antisimmetrica cambia segno, $\rho^{-}(z,m)=-\rho^{-}(m,z)$, mentre quella simmetrica resta invariata. Le due proiezioni sono condivise da tutte le bande, e ogni banda ha una propria matrice $U_k\in\mathbb R^{C\times r}$ che riporta le $r$ componenti nello spazio dei canali.
+
+\paragraph{Che cosa vede la relazione}
+Le due forme sembrano differire per un segno, ma rispondono a cose diverse. Basta scrivere il passato come il presente più una variazione, $m=z+\Delta$. Nella forma antisimmetrica il presente confrontato con sé stesso si annulla, e restano
+\begin{align}
+\label{eq:relazione_variazione}
+\rho^{-}(m,z)&=(A\Delta)\odot(Bz)-(B\Delta)\odot(Az),\\
+\rho^{+}(m,z)&=(A\Delta)\odot(Bz)+(B\Delta)\odot(Az)+2\,(Az)\odot(Bz).\nonumber
+\end{align}
+La forma antisimmetrica dipende soltanto dalla variazione e vale zero quando il passato coincide con il presente. Non vede ogni cambiamento, perché una variazione che le proiezioni non colgono, o che si limita a scalare il vettore, dà ancora zero, ma ciò che vede è sempre un cambiamento. La forma simmetrica contiene invece un termine che dipende dal solo presente, la co-attivazione istantanea delle due proiezioni, e risponde anche a configurazioni che non cambiano nel tempo. Una parte della sua capacità è quindi spesa su un'informazione che con il tempo non ha nulla a che fare.
+
+\paragraph{Una lettura geometrica}
+La differenza ha un'interpretazione intuitiva. Per ciascuna componente $j$ si possono riunire le due proiezioni di un vettore $x$ in un numero complesso, $c_j(x)=a_j^{\top}x+\mathrm{i}\,b_j^{\top}x$, dove $a_j$ e $b_j$ sono le righe $j$-esime di $A$ e $B$. Con questa notazione
+\begin{equation}
+\label{eq:relazione_fase}
+\rho^{-}_j=\lvert c_j(m)\rvert\,\lvert c_j(z)\rvert\,\sin(\theta_z-\theta_m),
+\qquad
+\rho^{+}_j=\lvert c_j(m)\rvert\,\lvert c_j(z)\rvert\,\sin(\theta_z+\theta_m),
+\end{equation}
+dove $\theta_m$ e $\theta_z$ sono le fasi di $c_j(m)$ e di $c_j(z)$. Ogni componente della forma antisimmetrica misura di quanto, e in quale verso, la coppia di proiezioni sia ruotata passando dal passato al presente (figura~\ref{fig:relazione}a). La forma simmetrica dipende invece dalla somma delle fasi, cioè dalla posizione della coppia più che dal suo movimento. È la stessa struttura dei modelli di energia del moto, nei quali il verso emerge dalla differenza di fase tra due filtri in quadratura~\cite{adelson1985spatiotemporal}, e delle rappresentazioni complesse con cui si modellano relazioni asimmetriche tra entità~\cite{trouillon2016complex}.
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=\textwidth]{images/cap5/cap5_relazione.pdf}
+    \caption[Relazione antisimmetrica e simmetrica]{Relazione antisimmetrica e simmetrica, su un esempio sintetico. (a)~Le due proiezioni di un vettore formano un punto del piano. La forma antisimmetrica dipende dalla rotazione tra passato e presente, quella simmetrica dalla somma delle due fasi. (b)~Un vettore ruota a velocità costante, si ferma e torna indietro, e il passato è il presente di tre passi prima. La forma antisimmetrica resta costante durante ciascuna rotazione, con il segno del verso, e si annulla durante la pausa. La forma simmetrica segue la posizione del vettore e resta diversa da zero anche quando nulla si muove.}
+    \label{fig:relazione}
+\end{figure}
+
+La figura~\ref{fig:relazione}b mostra la differenza su un esempio sintetico. Un vettore ruota a velocità costante in un verso, si ferma e poi ruota nel verso opposto. La forma antisimmetrica resta costante e positiva durante la prima rotazione, si annulla durante la pausa e diventa negativa durante la seconda. Codifica il verso del movimento e ignora la posizione. La forma simmetrica oscilla seguendo la posizione del vettore in entrambe le rotazioni, e durante la pausa assume un valore diverso da zero anche se nulla si muove. Le proiezioni apprese dalla rete non sono costrette a descrivere rotazioni, e i loro canali possono avere significati molto diversi. La proprietà, però, resta. La forma antisimmetrica risponde soltanto al modo in cui il presente differisce dal passato.
+
+\paragraph{Costo e partenza}
+La relazione aggiunge al modulo le due proiezioni condivise, $2rC=4\,096$ parametri, e le $K$ matrici $U_k$, altri $KCr=8\,192$. Con gli otto coefficienti di disponibilità, il modello passa da $501\,028$ a $513\,324$ parametri su DVS-Lip, il $2{,}5\%$ in più, e da $494\,578$ a $506\,874$ su THU-EACT-50-CHL. Le proiezioni del presente si calcolano una sola volta per passo e si conservano nel buffer accanto alla corrente, sicché i riassunti delle proiezioni si ottengono con le stesse somme cumulative usate per le correnti. Il buffer passa così da $C$ a $C+2r$ valori per posizione e passo, un quarto in più, e le moltiplicazioni dell'intero modello crescono di circa il $2\%$. La sezione~\ref{sec:compressione} mostra che, dopo l'addestramento, il modulo si lascia comprimere fino a costare meno del mixer a ritardi che sostituisce.
+
+All'inizializzazione le matrici $U_k$ valgono zero, mentre $A$ e $B$ sono generate in un flusso pseudo-casuale separato da quello del resto della rete. La relazione non contribuisce quindi alla corrente, e la rete parte esattamente dalla stessa funzione del modello di riferimento, come nel caso della sola memoria a intervalli. Le varianti confrontate nella sezione successiva differiscono soltanto per la forma di $\rho$, nulla, simmetrica o antisimmetrica, a parità di tutto il resto, e ogni differenza tra loro nasce dall'addestramento.
+
+
+% ==============================================================================
+%  Risultati
+% ==============================================================================
+
+\section{Risultati su DVS-Lip e THU-EACT-50-CHL}
+\label{sec:risultati_irm}
+
+Tutte le varianti di questa sezione sostituiscono il mixer a ritardi nello stesso punto, il secondo patch embedding, e differiscono tra loro per un solo elemento. La tabella~\ref{tab:risultati_irm} ne riporta la Macro-F1 e la media delle ultime 16 epoche, la figura~\ref{fig:risultati_irm} la differenza rispetto al modello di riferimento, distinguendo le differenze che il confronto appaiato giudica significative (sezione~\ref{sec:metriche_valutazione}).
+
+Le due validazioni vanno lette in modo diverso. Su THU-EACT-50-CHL, con 399 campioni, ciascun campione vale un quarto di punto di accuratezza, e una differenza risulta significativa soltanto quando i campioni corretti da una variante superano nettamente quelli che essa sbaglia in più. Su DVS-Lip, con quasi tremila campioni, anche due modelli di accuratezza simile sbagliano campioni in buona parte diversi. Il modello di riferimento e l'IRM antisimmetrico, per esempio, danno esiti diversi su 857 campioni. Su 434 l'IRM corregge un errore del riferimento, su 423 ne introduce uno nuovo, e il saldo di undici campioni è piccolo rispetto a questo rimescolamento. Su DVS-Lip, perciò, differenze dell'ordine di un punto non bastano a distinguere due varianti.
+
+\paragraph{Il richiamo da solo non basta}
+La memoria a intervalli senza relazione riassume il passato in modo più completo, ma lo restituisce ancora come una somma, e non migliora il riferimento su nessuno dei due dataset. Su THU-EACT-50-CHL resta allo stesso livello, su DVS-Lip perde circa due punti, in modo significativo. Una spiegazione plausibile riguarda la media. Il mixer a ritardi legge istanti precisi, mentre dentro una banda l'ordine dei passi si perde. Su DVS-Lip, dove i movimenti delle labbra sono brevi e fini, un riassunto più ampio ma meno preciso può costare più di quanto renda, se nulla lo mette a confronto con il presente.
+
+\begin{table}[b]
+\centering
+\small
+\renewcommand{\arraystretch}{1.2}
+\caption[Varianti della memoria nel secondo patch embedding]{Varianti della memoria nel secondo patch embedding, sulla validazione di sviluppo. Macro-F1 del checkpoint selezionato e media delle ultime 16 epoche, in percentuale. Il primo blocco cambia la forma della relazione, il secondo raccoglie i controlli. In grassetto il modulo proposto.}
+\label{tab:risultati_irm}
+\begin{tabular}{@{}l r r r r@{}}
+\hline
+ & \multicolumn{2}{c}{\textbf{DVS-Lip}} & \multicolumn{2}{c}{\textbf{THU-EACT-50-CHL}} \\
+\textbf{Variante} & \textbf{Macro-F1} & \textbf{Ultime 16} & \textbf{Macro-F1} & \textbf{Ultime 16} \\
+\hline
+Modello di riferimento & $56{,}9$ & $56{,}1$ & $54{,}9$ & $52{,}5$ \\
+IRM lineare & $54{,}7$ & $53{,}7$ & $54{,}4$ & $51{,}9$ \\
+IRM simmetrico & $57{,}0$ & $55{,}9$ & $59{,}0$ & $54{,}8$ \\
+IRM antisimmetrico & $\mathbf{57{,}5}$ & $\mathbf{56{,}7}$ & $\mathbf{62{,}6}$ & $\mathbf{59{,}8}$ \\
+IRM con instradamento & $56{,}4$ & $55{,}6$ & $60{,}4$ & $59{,}1$ \\
+\hline
+Sito vuoto & $56{,}2$ & $55{,}3$ & $50{,}9$ & $47{,}0$ \\
+MLP di pari parametri & $56{,}7$ & $55{,}9$ & $52{,}3$ & $49{,}6$ \\
+Relazione a punti & $57{,}2$ & $56{,}1$ & $59{,}7$ & $57{,}3$ \\
+Gate di contenuto & $57{,}5$ & $55{,}8$ & $58{,}9$ & $55{,}8$ \\
+\hline
+\end{tabular}
+\end{table}
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=\textwidth]{images/cap5/cap5_risultati.pdf}
+    \caption[Differenza di Macro-F1 rispetto al modello di riferimento]{Differenza di Macro-F1 di ciascuna variante rispetto al modello di riferimento, sulla validazione di sviluppo. Il simbolo pieno indica una differenza significativa nel confronto appaiato con il riferimento (test esatto di McNemar, $p<0{,}05$). Sopra la linea tratteggiata le forme della relazione, sotto i controlli.}
+    \label{fig:risultati_irm}
+\end{figure}
+
+\paragraph{Il confronto, e il suo verso}
+Aggiungere il confronto cambia il quadro. Rispetto alla sola memoria lineare, la relazione antisimmetrica guadagna oltre otto punti di accuratezza su THU-EACT-50-CHL e più di due su DVS-Lip, in entrambi i casi in modo significativo. Su THU-EACT-50-CHL l'IRM antisimmetrico supera il modello di riferimento di quasi otto punti di Macro-F1, e la media delle ultime epoche conferma un distacco di oltre sette, segno che il risultato non dipende dalla scelta del checkpoint migliore. Su DVS-Lip il vantaggio sul riferimento si riduce a poco più di mezzo punto, troppo poco per distinguerlo dalla variabilità dell'addestramento.
+
+Anche la forma del confronto sembra contare. Su THU-EACT-50-CHL la relazione simmetrica, con gli stessi parametri, ottiene circa metà del guadagno e resta quattro punti di accuratezza sotto quella antisimmetrica. Con 399 campioni il confronto appaiato non basta a rendere significativo questo margine, e su DVS-Lip le due forme si equivalgono. La direzione è quella indicata dalla sezione~\ref{sec:relazione}, secondo cui la forma simmetrica spende una parte della propria capacità sulla co-attivazione istantanea delle proiezioni, ma i dati la suggeriscono senza dimostrarla.
+
+L'ultima variante del blocco aggiunge all'IRM antisimmetrico un instradamento per contenuto. In ogni posizione e a ogni passo una piccola rete legge la corrente presente, l'intensità della relazione in ciascuna banda e la storia disponibile, e ne ricava due quantità. La prima è un'ampiezza complessiva del contributo del passato, la seconda una ripartizione di quel contributo tra le bande disponibili. I coefficienti di disponibilità dell'equazione~\eqref{eq:gate_disponibilita} vengono moltiplicati per entrambe, sicché la rete può decidere, campione per campione, quale passato usare. All'inizializzazione l'ampiezza vale uno e la ripartizione è uniforme, e la variante parte dall'IRM antisimmetrico. Non aggiunge nulla. A parità di relazione, scegliere in base al contenuto quale passato usare non migliora il risultato, e su entrambi i dataset la variante resta sotto l'IRM antisimmetrico semplice, senza che la differenza sia significativa.
+
+\paragraph{Non è una questione di capacità}
+Il secondo blocco della tabella risponde a un dubbio naturale. L'IRM antisimmetrico aggiunge circa dodicimila parametri, e un modello più grande potrebbe migliorare soltanto per questo. Due controlli rendono poco plausibile questa spiegazione. Il primo svuota il sito, eliminando la memoria in quel punto della rete. Il secondo vi colloca un percettrone multistrato con gli stessi parametri dell'intero IRM, che però elabora ogni passo per conto proprio, senza accesso al passato. Su THU-EACT-50-CHL entrambi finiscono sotto il modello di riferimento, e l'IRM antisimmetrico li supera di oltre undici punti di accuratezza. Parametri in più, senza accesso al passato, non bastano, e il guadagno sembra nascere dal modo in cui il passato viene usato. Su DVS-Lip i tre modelli restano entro un punto e mezzo di Macro-F1.
+
+Il sito vuoto dice qualcosa anche sul modello di riferimento. Su THU-EACT-50-CHL togliere il mixer a ritardi dal secondo patch embedding costa circa quattro punti di accuratezza, un indizio che già il semplice richiamo del passato fosse utile. Il confronto ne aggiunge altri otto.
+
+\paragraph{Bande, punti e gate di contenuto}
+Gli altri due controlli isolano ingredienti più specifici. La relazione a punti applica lo stesso confronto antisimmetrico ai quattro istanti letti dal mixer a ritardi, anziché alle medie delle bande. Su THU-EACT-50-CHL resta quasi quattro punti di accuratezza sotto la versione a bande, con una differenza significativa, mentre su DVS-Lip le due versioni si equivalgono. Almeno su THU-EACT-50-CHL, dunque, il confronto rende di più se applicato a un riassunto del passato anziché a singoli istanti.
+
+Il gate di contenuto è la variante condizionale del mixer a ritardi della sezione~\ref{sec:ritardi_adattivi}, che decide in base alla corrente presente quanto passato far entrare e come distribuirlo tra i ritardi, senza confrontarlo con il presente. Il capitolo~\ref{chap:riallocazione_budget} lo aveva messo da parte in attesa di un ingresso diverso. Con la rappresentazione a lunghezza variabile migliora il riferimento di quattro punti di accuratezza su THU-EACT-50-CHL, in modo significativo, ma resta a sua volta circa quattro punti sotto l'IRM antisimmetrico, un margine vicino alla significatività. Decidere quanto passato usare aiuta, confrontarlo con il presente sembra aiutare di più.
+
+\paragraph{Due dataset, due comportamenti}
+La figura~\ref{fig:risultati_irm} mette in evidenza il contrasto tra i due dataset. Su THU-EACT-50-CHL le varianti si separano nettamente, in un ordine coerente con le proprietà della relazione. Su DVS-Lip restano tutte entro un punto dal riferimento, e soltanto la memoria lineare se ne allontana in modo significativo, nella direzione sbagliata. L'IRM antisimmetrico è anche qui tra i valori più alti, ma con un margine che non si distingue dalla variabilità dell'addestramento.
+
+Il contrasto riflette probabilmente il ruolo che la memoria del secondo stadio ha nei due compiti. Su THU-EACT-50-CHL è un passaggio importante, come suggerisce il calo del sito vuoto, e le azioni, lunghe e di durata molto variabile, offrono alla relazione un passato da confrontare. Su DVS-Lip quel punto della rete conta poco, in entrambe le direzioni, e nessuna variante della memoria sposta in modo apprezzabile il risultato. Il limite di questo dataset va cercato altrove, e il capitolo~\ref{chap:scalabilita} mostra che cede ad altre leve, come la capacità del modello e la distillazione.
+Prima di discutere le alternative, conviene verificare che cosa la soluzione appresa usi davvero e se il guadagno su THU-EACT-50-CHL si ripeta sul test ufficiale.
+
+
+% ==============================================================================
+%  Che cosa usa la soluzione appresa
+% ==============================================================================
+% Fonti: test ufficiale da artifacts/reports/c0_ri_diagnostics/csv/E2.csv e predizioni in workers/ (McNemar calcolato
+% in locale, originale: DVS-Lip 681 corretti / 617 introdotti, p=0,08; THU 80/26, p=1,4e-7; invertito THU 36/33, p=0,81).
+% Interventi nel solo secondo sito da artifacts/reports/rt_fbc_comparison/ablations.json (funzione intervention in
+% src/etsr/evaluation/temporal_memory.py: trace_k_off azzera W_k e U_k di una banda, relation_off azzera tutte le U_k).
+% Figure: figure_scripts/cap5/fig_uso_memoria.py.
+% PROVVISORIO su DVS-Lip: test, ordine e interventi usano per ora il checkpoint IRM 20261026_112001. Aggiornare con le
+% valutazioni sul checkpoint di riferimento 20261112_082513. Su THU il checkpoint IRM e' quello della tabella 5.1.
+
+\section{Che cosa usa la soluzione appresa}
+\label{sec:uso_memoria}
+
+I risultati della sezione precedente dicono quanto l'IRM antisimmetrico migliori il modello di riferimento, ma non come la rete addestrata lo usi. Questa sezione pone tre domande più dirette. Il guadagno si ripete su dati diversi da quelli con cui i modelli sono stati scelti? Quanto conta il confronto, e su quale passato si appoggia? Il guadagno dipende dall'ordine in cui i passi si susseguono?
+
+Le ultime due domande si affrontano con interventi sul checkpoint (sezione~\ref{sec:disegno_controlli}). Il modello addestrato viene modificato soltanto in inferenza, spegnendo una parte del modulo o alterando l'ingresso, e si misura quanto cambi il risultato. Un calo indica quanto la soluzione appresa dipenda da quella parte, non che cosa otterrebbe una rete addestrata senza di essa.
+
+\paragraph{Il test ufficiale}
+I modelli di questa tesi sono stati scelti sulla validazione di sviluppo. Il test ufficiale è stato valutato soltanto a posteriori, in sola inferenza e a fini diagnostici, sul modello di riferimento e sull'IRM antisimmetrico già selezionati (sezione~\ref{subsec:partizioni_riservate}). La tabella~\ref{tab:test_ufficiale} riporta l'esito. Su THU-EACT-50-CHL il guadagno si ripete, ed è anzi un po' più ampio che sulla validazione. L'IRM supera il riferimento di quasi dieci punti di accuratezza e di quasi undici di Macro-F1, correggendo 80 errori del riferimento e introducendone 26, una differenza nettamente significativa. Su DVS-Lip il vantaggio resta di poco più di un punto, e il confronto appaiato non lo distingue dalla variabilità. Il quadro dei due dataset è dunque lo stesso della validazione.
+
+\begin{table}[t]
+\centering
+\small
+\renewcommand{\arraystretch}{1.2}
+\caption[Modello di riferimento e IRM antisimmetrico sul test ufficiale]{Modello di riferimento e IRM antisimmetrico sul test ufficiale, valutato a posteriori e in sola inferenza, con 4\,975 campioni su DVS-Lip e 544 su THU-EACT-50-CHL. Valori in percentuale, differenze in punti. L'asterisco indica una differenza di accuratezza significativa nel confronto appaiato.}
+\label{tab:test_ufficiale}
+\begin{tabular}{@{}l r r r r@{}}
+\hline
+ & \multicolumn{2}{c}{\textbf{DVS-Lip}} & \multicolumn{2}{c}{\textbf{THU-EACT-50-CHL}} \\
+\textbf{Modello} & \textbf{Accuratezza} & \textbf{Macro-F1} & \textbf{Accuratezza} & \textbf{Macro-F1} \\
+\hline
+Modello di riferimento & $50{,}0$ & $49{,}7$ & $56{,}1$ & $48{,}7$ \\
+IRM antisimmetrico & $51{,}3$ & $50{,}6$ & $66{,}0$ & $59{,}6$ \\
+\hline
+Differenza & $+1{,}3$ & $+0{,}9$ & $+9{,}9^{*}$ & $+10{,}8$ \\
+\hline
+\end{tabular}
+\end{table}
+
+\paragraph{Quanto conta il confronto, e quale passato}
+Il primo intervento azzera nel checkpoint tutte le matrici $U_k$, cioè il contributo della relazione, lasciando intatto il richiamo lineare delle bande. La Macro-F1 crolla, di 37 punti su DVS-Lip e di 52 su THU-EACT-50-CHL. La soluzione appresa non tratta la relazione come un termine accessorio, ma vi si appoggia in modo massiccio. Accade anche su DVS-Lip, dove pure il guadagno rispetto al riferimento è piccolo, un indizio che su questo dataset la relazione è una delle vie per arrivare a un risultato che il riferimento raggiunge in altro modo.
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=\textwidth]{images/cap5/cap5_bande_usate.pdf}
+    \caption[Dipendenza dell'IRM antisimmetrico dalle singole bande]{Dipendenza dell'IRM antisimmetrico addestrato dalle singole bande. Variazione di accuratezza sulla validazione di sviluppo quando si azzerano, soltanto in inferenza e soltanto nel secondo patch embedding, le matrici $W_k$ e $U_k$ di una banda. Le bande sono ordinate dalla più vicina alla più lontana dal presente.}
+    \label{fig:bande_usate}
+\end{figure}
+
+Il secondo intervento azzera una banda alla volta, cioè le sue matrici $W_k$ e $U_k$, soltanto nel secondo patch embedding (figura~\ref{fig:bande_usate}). Su entrambi i dataset le bande lontane pesano molto più di quelle vicine. Togliere la terza o la quarta banda costa da 16 a 23 punti di accuratezza, togliere una delle prime due da 3 a 7. La rete si appoggia dunque soprattutto a un passato separato dal presente da qualche passo, compreso fra $0{,}14$ e $0{,}41\,\mathrm{s}$ su DVS-Lip e fra $0{,}49$ e $1{,}61\,\mathrm{s}$ su THU-EACT-50-CHL. Sarà proprio questo passato a distanza definita a mancare ad alcune delle alternative della sezione~\ref{sec:spazio_progetto}. Una possibile ragione del peso minore delle bande vicine è che il passato più recente somiglia ancora al presente, e il confronto con esso porta meno informazione nuova.
+
+\paragraph{L'ordine dei passi}
+L'ultimo intervento altera l'ordine dei passi di ogni campione del test, invertendolo oppure rimescolandolo a caso, con tre permutazioni diverse di cui si riporta la media. Il contenuto di ciascun passo resta lo stesso. Dentro un passo gli eventi non vengono riordinati e le polarità non vengono scambiate, sicché la sequenza invertita non equivale a una scena riprodotta all'indietro. È piuttosto una sequenza che la rete non ha mai visto, con gli stessi passi in un altro ordine.
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=\textwidth]{images/cap5/cap5_ordine.pdf}
+    \caption[Accuratezza sul test con l'ordine dei passi alterato]{Accuratezza sul test ufficiale del modello di riferimento e dell'IRM antisimmetrico, con i passi di ogni campione nell'ordine originale, invertiti oppure rimescolati a caso (media di tre permutazioni). Il contenuto di ciascun passo non cambia.}
+    \label{fig:ordine}
+\end{figure}
+
+La figura~\ref{fig:ordine} mostra l'esito. Su DVS-Lip entrambi i modelli crollano a pochi punti di accuratezza, e la lettura labiale dipende quindi interamente dall'ordine, con o senza IRM. Su THU-EACT-50-CHL entrambi perdono molto, ma il vantaggio dell'IRM scompare. Con i passi invertiti i due modelli si equivalgono, e con i passi rimescolati l'IRM resta anzi sotto il riferimento. I quasi dieci punti che l'IRM guadagna sulla sequenza originale dipendono quindi dall'ordine in cui i passi si susseguono, come ci si aspetta da un modulo che confronta il presente con un passato collocato a distanze precise. La prova non dimostra che l'IRM sia l'unico modo di sfruttare l'ordine, perché anche il riferimento ne dipende in larga misura, e le sequenze alterate sono anche ingressi diversi da quelli visti in addestramento.
+
+In sintesi, la soluzione appresa si appoggia in modo massiccio al confronto, lo applica soprattutto alle bande più lontane e trae il proprio vantaggio dall'ordine dei passi. Su THU-EACT-50-CHL questo vantaggio si conferma sul test ufficiale.
+
+
+% ==============================================================================
+%  Che cosa rende utile la memoria
+% ==============================================================================
+% Fonti dei meccanismi (repository di ricerca, commit dcc054b): tracce in src/etsr/models/adaptive_memory.py
+% (lettura prima della scrittura, h = h0 (e^theta + rho e/s), divisione per la massa, h0 dal ritardo medio della banda),
+% SSA temporale in src/etsr/models/temporal_attention.py (K^T V + sum_k g_k (L_k M_k + R_k G_k), R = mean(A)^T B - A^T mean(B),
+% A=K e B=V nella forma condivisa), consolidamento in src/etsr/models/consolidation_memory.py (K=4 segmenti,
+% fusione della coppia adiacente di costo minimo nella metrica funzionale, gate su eta' e durata),
+% orologi in src/etsr/models/change_time.py (inc = a/a_unit + 1 con bordi raddoppiati, cioe' s=1 e gamma=1;
+% orologio appreso inc = s((1+a/a_unit)/2)^gamma da s=1, gamma=0; a_unit = mediana pesata dagli eventi sul training),
+% memoria remota in src/etsr/models/remote_context.py (media normalizzata del passato s < t - d_K, proiezioni proprie,
+% W e U da zero, gate su eta' media e durata). Parametri appresi dell'orologio da history.csv (ultima epoca):
+% DVS-Lip s=0,491 gamma=0,396; THU s=0,819 gamma=0,203. Stato delle tracce: docs/STRUTTURA_NARRATIVA..., par. 11.6.
+% Numeri e confronti appaiati da figure_scripts/cap5/risultati5.py.
+
+\section{Che cosa rende utile la memoria}
+\label{sec:spazio_progetto}
+
+La sezione~\ref{sec:risultati_irm} ha individuato nel confronto antisimmetrico l'ingrediente principale del modulo. Il modulo, però, fa anche altre scelte, meno visibili ma non per questo neutre. Riassume il passato in bande a distanza fissa dal presente, misura quelle distanze in passi di durata fisica nota e confronta passato e presente in un punto preciso della rete, prima dell'attenzione del secondo stadio. Ciascuna scelta è stata messa alla prova sostituendola con un'alternativa ragionevole, a parità di relazione antisimmetrica. Le prove rispondono a tre domande, come riassumere il passato, dove confrontarlo con il presente e con quale orologio misurarlo. Ogni alternativa viene prima descritta e poi valutata, e la tabella~\ref{tab:spazio_progetto} ne raccoglie gli esiti. Alcune alternative cambiano più di un elemento alla volta, e le conclusioni riguardano quindi le versioni provate, non ogni memoria dello stesso tipo.
+
+\begin{table}[t]
+\centering
+\small
+\renewcommand{\arraystretch}{1.2}
+\caption[Alternative alle scelte dell'IRM antisimmetrico]{Alternative alle scelte dell'IRM antisimmetrico, a parità di relazione, sulla validazione di sviluppo. Macro-F1 [\%]. L'asterisco indica un risultato significativamente inferiore all'IRM antisimmetrico nel confronto appaiato (test esatto di McNemar, $p<0{,}05$).}
+\label{tab:spazio_progetto}
+\begin{tabular}{@{}l r r@{}}
+\hline
+\textbf{Variante} & \textbf{DVS-Lip} & \textbf{THU-EACT-50-CHL} \\
+\hline
+IRM antisimmetrico & $57{,}5$ & $62{,}6$ \\
+\hline
+\multicolumn{3}{@{}l}{\emph{Come riassumere il passato}} \\
+\quad tracce a decadimento costante & $54{,}7^{*}$ & $53{,}4^{*}$ \\
+\quad tracce guidate dagli eventi & $56{,}7$ & $60{,}2$ \\
+\quad memoria di consolidamento & $57{,}0$ & $58{,}5^{*}$ \\
+\quad bande e memoria remota & $58{,}1$ & $59{,}4$ \\
+\multicolumn{3}{@{}l}{\emph{Dove confrontare passato e presente}} \\
+\quad nella SSA, solo richiamo & $54{,}1^{*}$ & $50{,}4^{*}$ \\
+\quad nella SSA, confronto su Key e Value & $56{,}5$ & $55{,}6^{*}$ \\
+\quad nella SSA, confronto su proiezioni dedicate & $55{,}5$ & $53{,}8^{*}$ \\
+\quad nel primo patch embedding & $57{,}7$ & $57{,}0^{*}$ \\
+\quad in entrambi i patch embedding & $57{,}5$ & $60{,}1$ \\
+\multicolumn{3}{@{}l}{\emph{Con quale orologio misurare il passato}} \\
+\quad bande in tempo di attività & $56{,}9$ & $59{,}4^{*}$ \\
+\quad orologio appreso & $58{,}3$ & $58{,}6^{*}$ \\
+\hline
+\end{tabular}
+\end{table}
+
+\paragraph{Come riassumere il passato}
+Le bande hanno un orizzonte breve e fisso, poco più di $0{,}4\,\mathrm{s}$ su DVS-Lip e $1{,}6\,\mathrm{s}$ su THU-EACT-50-CHL, e ciò che è accaduto prima non entra nella memoria. Le reti ricorrenti affrontano lo stesso problema in un altro modo, con uno stato che decade nel tempo e una velocità di oblio che può essere appresa, o perfino dipendere dall'ingresso, come nei modelli a spazio di stato selettivi~\cite{gu2023mamba}. Viene naturale chiedersi se una memoria di questo tipo funzioni meglio delle bande.
+
+La prima alternativa sostituisce ciascuna banda con una \emph{traccia}, cioè una media mobile esponenziale delle correnti passate. A ogni passo il modulo legge la traccia, che riassume il passato fino al passo precedente, la usa al posto della media di banda $m_{k,t}$ nell'equazione~\eqref{eq:irm_generale}, e soltanto dopo la aggiorna con il presente,
+\begin{equation}
+\label{eq:traccia}
+m_{k,t+1}=\lambda_{k,t}\,m_{k,t}+\bigl(1-\lambda_{k,t}\bigr)\,z_t,
+\qquad
+\lambda_{k,t}=\exp\bigl(-h_{k,t}\bigr).
+\end{equation}
+Il coefficiente $\lambda_{k,t}$, compreso tra zero e uno, stabilisce quanta parte della traccia sopravviva a ogni passo, e il tasso di oblio $h_{k,t}$ ne fissa l'orizzonte. Dopo $1/h_{k,t}$ passi un contributo pesa poco più di un terzo di quanto pesava appena entrato. All'inizializzazione l'orizzonte di ogni traccia coincide con il ritardo medio della banda che sostituisce. Come per le bande, la traccia viene divisa per il peso effettivamente accumulato, sicché all'inizio della sequenza non è diluita da un passato inesistente, e le proiezioni $Az$ e $Bz$ vengono mediate allo stesso modo, così che la relazione resti quella dell'IRM.
+
+Le versioni provate sono due. Nella prima il tasso di oblio è un parametro appreso per ciascuna traccia, $h_{k,t}=h_k$, uguale per tutti i passi e tutti i campioni. La rete sceglie quanto lontano guardare, ma non può adattarlo a ciò che accade. Nella seconda l'oblio dipende anche dagli eventi del sensore,
+\begin{equation}
+\label{eq:traccia_eventi}
+h_{k,t}=h_k+\eta_k\,\frac{e_t}{\bar e},
+\end{equation}
+dove $e_t$ conta gli eventi registrati al passo $t$ nella zona del sensore che corrisponde alla posizione, un quadrato di $16\times16$ pixel, $\bar e$ è il suo valore medio sul training e $\eta_k\ge0$ è appreso a partire da zero. Quando nella zona non accade nulla la traccia conserva il proprio contenuto, salvo il decadimento di fondo $h_k$. Quando arrivano molti eventi si rinnova in fretta, e il presente vi entra con un peso maggiore. La memoria avanza così con l'attività del sensore più che con il tempo. Entrambe le versioni costano molto meno delle bande in memoria. Conservano quattro riassunti per posizione anziché le correnti degli ultimi 15 passi, 23 su THU-EACT-50-CHL, e lo stato della memoria nel secondo patch embedding si riduce di circa tre quarti su DVS-Lip e di oltre quattro quinti su THU-EACT-50-CHL.
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=\textwidth]{images/cap5/cap5_forme_passato.pdf}
+    \caption[Tre modi di riassumere il passato]{Tre modi di riassumere il passato, rappresentati dal peso che ciascun riassunto attribuisce ai passi precedenti. (a)~Le bande di DVS-Lip mediano gruppi di passi entro ritardi fissi. (b)~Le tracce a decadimento costante, con gli orizzonti appresi su DVS-Lip, partono tutte dal passo precedente e pesano di più il passato recente. (c)~La memoria di consolidamento ripartisce tutto il passato in quattro segmenti, con bordi che dipendono dal contenuto e cambiano da un campione all'altro. Le due configurazioni mostrate sono illustrative.}
+    \label{fig:forme_passato}
+\end{figure}
+
+La traccia a decadimento costante, pur accompagnata dalla relazione antisimmetrica, si ferma al livello della memoria lineare su entrambi i dataset e resta sotto le bande in modo significativo. Durante l'addestramento la rete ne allunga gli orizzonti, su DVS-Lip da un massimo iniziale di $0{,}3$ fino a $5\,\mathrm{s}$, su THU-EACT-50-CHL da $1{,}2$ a quasi $4\,\mathrm{s}$, ma il passato in più non si traduce in un risultato migliore. Una possibile spiegazione sta nella forma della traccia. Una traccia pesa ogni passo meno di quello che lo segue, e anche la più lunga dà il peso maggiore al passo appena trascorso (figura~\ref{fig:forme_passato}b). Il passato che riassume resta così mescolato con ciò che è appena accaduto, mentre una banda lontana riassume un intervallo a distanza definita, separato dal presente dalle bande che la precedono.
+
+La traccia guidata dagli eventi cambia il risultato su THU-EACT-50-CHL, dove guadagna sette punti e mezzo di accuratezza su quella a decadimento costante e arriva a tre punti dalle bande, una distanza non significativa. Il comportamento appreso è istruttivo. Nella traccia più lunga il decadimento di fondo diventa quasi nullo, con un orizzonte di oltre dieci secondi, e la memoria si rinnova quasi soltanto quando la sua zona del sensore registra eventi. Ricorda episodi di attività più che lo scorrere del tempo, e la rete se ne serve davvero. Annullando in inferenza il termine degli eventi, la Macro-F1 scende da $60{,}2$ a $50{,}8$. La traccia resta comunque sotto le bande, e su DVS-Lip non migliora in modo significativo quella a decadimento costante.
+
+Una seconda alternativa lascia decidere al contenuto dove finisca una porzione di passato e cominci la successiva. La \emph{memoria di consolidamento} mantiene, in ogni posizione, quattro segmenti consecutivi che insieme coprono tutto il passato osservato, dal primo passo della sequenza a quello precedente. Ogni segmento conserva la media delle correnti che contiene e il numero dei suoi passi. A ogni passo il presente entra come un nuovo segmento, lungo un solo passo, e per tornare a quattro due segmenti adiacenti vengono fusi in uno, con una media pesata dalla loro lunghezza. Tra le coppie possibili viene fusa quella che cambierebbe meno la risposta del modulo, misurata attraverso le stesse matrici con cui il modulo legge la memoria. Passi simili tendono così a confluire nello stesso segmento, mentre un cambiamento netto resta separato e segna un bordo (figura~\ref{fig:forme_passato}c). Ogni segmento viene poi letto come una banda, con richiamo e confronto antisimmetrico, e il suo contributo è pesato da un coefficiente che dipende dalla sua età e dalla sua durata. L'orizzonte non ha più limiti, e i bordi seguono il contenuto e cambiano da un campione all'altro.
+
+Su DVS-Lip il risultato non cambia, su THU-EACT-50-CHL la memoria perde oltre quattro punti di accuratezza rispetto alle bande, in modo significativo. Anche qui viene meno un passato a distanza definita. Ogni banda dell'IRM possiede matrici proprie, $W_k$ e $U_k$, che imparano a leggere un passato di età nota, così come il correlatore di Reichardt è accordato su un ritardo. Nella memoria di consolidamento il $k$-esimo segmento non ha un'età fissa. Il modulo la conosce, perché entra nel coefficiente, ma le stesse matrici vengono applicate a un passato lontano pochi passi in un campione e qualche secondo in un altro. Le stesse conclusioni valgono per altre regole di fusione e per una memoria con il doppio dei segmenti, che su THU-EACT-50-CHL restano tutte sotto le bande.
+
+Resta da chiedersi se alle bande manchi soltanto un passato più lontano. La terza alternativa conserva le quattro bande e aggiunge un quinto riassunto, la media di tutto il passato più vecchio dell'ultima banda, cioè dei passi che distano dal presente più di 15 passi su DVS-Lip e più di 23 su THU-EACT-50-CHL, fino all'inizio della sequenza. Il riassunto remoto ha proiezioni e matrici proprie, che partono da zero, e un coefficiente che dipende dalla sua età media e dalla sua durata. Su DVS-Lip resta allo stesso livello dell'IRM, su THU-EACT-50-CHL perde quasi quattro punti di accuratezza, un margine vicino alla significatività. Lo stesso accade se il passato remoto viene riassunto con la memoria di consolidamento anziché con una media.
+
+Le tre alternative convergono. Un passato più lungo, offerto dalle tracce, dai segmenti o da un riassunto remoto, non migliora le bande, e su THU-EACT-50-CHL tende a peggiorarle. Rendono di più riassunti a distanza definita dal presente, entro un orizzonte limitato.
+
+\paragraph{Dove confrontare passato e presente}
+Nell'IRM il confronto avviene nel secondo patch embedding, sulle correnti di una convoluzione, prima che le feature raggiungano l'attenzione. Molti dei lavori discussi nella sezione~\ref{sec:strategie_modellazione_temporale} rendono temporale proprio l'attenzione, e ci si può chiedere se non sia quello il posto naturale del confronto. Per verificarlo, la prova svuota il sito dell'IRM e sposta la memoria a bande dentro la SSA del secondo stadio.
+
+Conviene ricordare come lavora la SSA (equazione~\eqref{eq:ssa_baseline}). A ogni passo e per ciascuna testa, la matrice $K_t^{\top}V_t$, di $16\times16$ elementi, somma su tutti i token le co-attivazioni tra i canali della Key e quelli del Value, e ogni token la legge poi attraverso la propria Query. Poiché riassume l'intero passo in pochi numeri, la matrice si presta bene a essere ricordata. La variante temporale le aggiunge un contributo del passato per ciascuna banda,
+\begin{equation}
+\label{eq:ssa_temporale}
+K_t^{\top}V_t+\sum_{k=1}^{K}b_{k,t}\Bigl(\overline{S}_{k,t}\,M_k+R_{k,t}\,G_k\Bigr),
+\qquad
+R_{k,t}=\overline{K}_{k,t}^{\top}V_t-K_t^{\top}\overline{V}_{k,t},
+\end{equation}
+dove $\overline{S}_{k,t}$ è la media nella banda delle matrici $K_s^{\top}V_s$ dei passi passati, $\overline{K}_{k,t}$ e $\overline{V}_{k,t}$ sono le medie nella banda di Key e Value, token per token, e $M_k$, $G_k$ sono matrici $16\times16$ apprese per banda e per testa, inizializzate a zero. Il primo termine è un richiamo, che riporta nel presente le associazioni dei passi precedenti. Il secondo è un confronto con la struttura dell'equazione~\eqref{eq:relazione_antisimmetrica}, in cui Key e Value prendono il posto delle due proiezioni. Associa le Key del passato ai Value del presente e sottrae l'associazione speculare, confrontando ogni token con la stessa posizione nel passato prima di sommare su tutti i token.
+
+Le varianti provate sono tre. La più semplice conserva soltanto il richiamo, in uno spirito simile a quello di STAtten~\cite{lee2025spiking}. La seconda aggiunge il confronto su Key e Value. La terza calcola il confronto su due proiezioni spiking dedicate, al posto di Key e Value. Tutte usano le bande e i coefficienti di disponibilità dell'IRM, e all'inizializzazione coincidono con la rete a sito vuoto. I parametri temporali vanno da circa ottomila per il solo richiamo a circa cinquantamila per le proiezioni dedicate, contro i circa settantottomila del sito dell'IRM.
+
+Dentro l'attenzione il richiamo da solo non dà nulla, e su entrambi i dataset resta sotto il modello di riferimento, in modo significativo. Con il confronto, su THU-EACT-50-CHL la rete recupera circa il $40\%$ della distanza che separa il sito vuoto dall'IRM e torna al livello del riferimento, mentre le proiezioni dedicate, pur con più parametri, non fanno meglio di Key e Value. In ogni forma, però, l'IRM nel patch embedding resta superiore di oltre sette punti di accuratezza su THU-EACT-50-CHL, mentre su DVS-Lip le versioni con il confronto gli si avvicinano. Una spiegazione plausibile sta in ciò che la SSA conserva. La somma sui token riassume il passo in un'unica associazione tra canali, e il confronto dice quali canali siano cambiati, ma non dove. L'IRM confronta invece passato e presente posizione per posizione, e il risultato resta legato al punto dell'immagine in cui il cambiamento è avvenuto. Nella SSA, inoltre, la memoria raggiunge un token soltanto attraverso la sua Query, e dove la Query non emette spike il passato non viene letto. Le varianti nell'attenzione cambiano però anche le feature confrontate e il numero di parametri, e la prova non isola la sola località del confronto. Anche dentro l'attenzione, d'altra parte, è il confronto orientato a fare la differenza, non il richiamo.
+
+La stessa domanda si pone tra i due siti del mixer a ritardi del modello di riferimento (sezione~\ref{subsec:mixer_ritardi}). Anche il primo, nell'ultimo strato del frontend piramidale che forma il primo patch embedding, potrebbe ospitare l'IRM. Lì la mappa ha $16\times16$ posizioni e 64 canali, e le feature, che descrivono porzioni più piccole dell'immagine, vedono movimenti più fini. La prova colloca l'IRM in quel punto, riportando il secondo patch embedding al mixer a ritardi, e poi in entrambi i siti. Spostata nel primo patch embedding, la memoria perde su THU-EACT-50-CHL oltre cinque punti di accuratezza rispetto al secondo, in modo significativo. Collocata in entrambi, non aggiunge nulla al solo secondo sito, e su THU-EACT-50-CHL tende anzi a peggiorare. Su DVS-Lip le tre collocazioni si equivalgono. È plausibile che nel primo patch embedding, dove le feature sono ancora poco astratte e le posizioni molte, il confronto orientato abbia meno da offrire. Fra le collocazioni provate un solo sito, nel secondo patch embedding, basta, ed è anche la scelta più economica, perché a quel livello le posizioni sono poche e lo stato della memoria resta piccolo.
+
+\paragraph{Con quale orologio misurare il passato}
+Le bande misurano il passato in passi, cioè in tempo fisico, ma l'attività del sensore non scorre in modo uniforme. Una zona dell'immagine può restare in silenzio per molti passi e poi ricevere decine di eventi in pochi millisecondi, e un'esecuzione appena più lenta o più rapida sposta i movimenti da una banda all'altra. Viene allora da chiedersi se il passato non vada misurato, almeno in parte, in quantità di cambiamento accumulato.
+
+Le due alternative provate conservano le bande e la relazione, ma ne misurano i bordi su un orologio locale $c_t$, proprio di ogni posizione, anziché sul numero di passi. A ogni passo l'orologio avanza di
+\begin{equation}
+\label{eq:orologio_locale}
+c_t-c_{t-1}=s\,\Bigl(\frac{1}{2}+\frac{a_t}{2\,\hat a}\Bigr)^{\gamma},
+\end{equation}
+dove $a_t$ conta gli eventi registrati al passo $t$ nella zona del sensore che corrisponde alla posizione e $\hat a$ è un'attività tipica, misurata sul training, tale che metà degli eventi cada in zone e passi con un'attività non superiore. Con $s=1$ e $\gamma=0$ l'orologio avanza di un passo per passo e si ritrova l'IRM. La prima alternativa, le \emph{bande in tempo di attività}, fissa $s=1$ e $\gamma=1$. In una zona silenziosa l'orologio avanza di mezzo passo e le bande si estendono fino al doppio dei passi, con l'attività tipica coincidono con le bande fisiche, e dove gli eventi abbondano si accorciano. Il passato si misura così in parte in tempo e in parte in cambiamento. La seconda, l'\emph{orologio appreso}, lascia alla rete i due parametri, condivisi da tutte le bande e le posizioni, a partire dal tempo fisico. La scala $s$ allunga o accorcia tutte le bande, l'esponente $\gamma$ stabilisce quanto l'attività acceleri l'orologio.
+
+Nessuno dei due orologi migliora le bande in tempo fisico. Su DVS-Lip i risultati restano entro un punto dall'IRM, su THU-EACT-50-CHL entrambi perdono circa quattro punti di accuratezza, in modo significativo. I parametri dell'orologio appreso mostrano che la rete, lasciata libera, si allontana comunque dal tempo fisico. Rallenta l'orologio, con una scala finale di $0{,}49$ su DVS-Lip e $0{,}82$ su THU-EACT-50-CHL, sicché le bande raggiungono un passato più lontano, circa il doppio su DVS-Lip, e lascia che l'attività lo acceleri, con un esponente di $0{,}40$ e $0{,}20$. Come per le tracce, l'addestramento spinge verso un passato più lungo, ma la validazione non ne trae vantaggio.
+
+\begin{table}[t]
+\centering
+\small
+\renewcommand{\arraystretch}{1.2}
+\caption[L'IRM antisimmetrico con due rappresentazioni dell'ingresso]{Macro-F1 [\%] del modello di riferimento e dell'IRM antisimmetrico, addestrati con la rappresentazione a lunghezza variabile e con quella a durata normalizzata, sulla validazione di sviluppo. Le bande sono le stesse in passi, ma soltanto con la lunghezza variabile corrispondono a intervalli di tempo fissi. L'asterisco indica una differenza significativa nel confronto appaiato.}
+\label{tab:irm_durata_normalizzata}
+\begin{tabular}{@{}l r r r r r r@{}}
+\hline
+ & \multicolumn{3}{c}{\textbf{DVS-Lip}} & \multicolumn{3}{c}{\textbf{THU-EACT-50-CHL}} \\
+\textbf{Rappresentazione} & \textbf{Rif.} & \textbf{IRM} & \textbf{Diff.} & \textbf{Rif.} & \textbf{IRM} & \textbf{Diff.} \\
+\hline
+lunghezza variabile & $56{,}9$ & $57{,}5$ & $+0{,}6$ & $54{,}9$ & $62{,}6$ & $+7{,}6^{*}$ \\
+durata normalizzata & $56{,}2$ & $57{,}6$ & $+1{,}4$ & $49{,}7$ & $50{,}8$ & $+1{,}0$ \\
+\hline
+\end{tabular}
+\end{table}
+
+Un'ultima prova cambia l'orologio dell'intera rete anziché quello della sola memoria. Con la rappresentazione a durata normalizzata della sezione~\ref{subsec:durata_normalizzata}, ogni campione è diviso in 40 passi di uguale durata, e la durata di un passo segue quella del campione. Le bande restano le stesse in passi, ma coprono ora una frazione fissa di ciascun campione anziché un intervallo di tempo fisso. La tabella~\ref{tab:irm_durata_normalizzata} confronta il guadagno dell'IRM antisimmetrico sul modello di riferimento con le due rappresentazioni. Su THU-EACT-50-CHL il guadagno passa da quasi otto punti di Macro-F1 a uno soltanto, non più significativo. Su DVS-Lip, dove le due rappresentazioni si equivalgono, il guadagno resta piccolo in entrambi i casi. La prova cambia anche la durata del passo con cui evolvono i neuroni, e non isola il solo orologio della memoria. Indica però che, su THU-EACT-50-CHL, il confronto rende soprattutto quando i ritardi corrispondono a intervalli di tempo fissi.
+
+\paragraph{Che cosa serve, in sintesi}
+Le prove di questa sezione e della precedente delineano che cosa renda utile una memoria temporale in questa rete, almeno nelle versioni provate. Il confronto con il presente è l'ingrediente principale, perché senza di esso la memoria resta un richiamo, e la sua forma antisimmetrica rende più di quella simmetrica. Il passato da confrontare rende di più se è riassunto in bande a distanza definita dal presente e misurato in tempo fisico, rispetto a tracce, segmenti decisi dal contenuto, passato remoto od orologi guidati dagli eventi. Le bande, a loro volta, rendono più dei singoli istanti. Il sito più adatto, fra quelli provati, è locale e precede l'attenzione, nel secondo patch embedding. Su THU-EACT-50-CHL quasi ogni alternativa perde terreno, spesso in modo significativo, mentre su DVS-Lip le differenze restano entro la variabilità dell'addestramento. Tra le alternative, le tracce guidate dagli eventi sono le più vicine alle bande su THU-EACT-50-CHL con uno stato molto più piccolo, e restano un'opzione da considerare quando la memoria disponibile è scarsa. Nella sua struttura, l'IRM antisimmetrico richiama un banco di correlatori del tipo di Reichardt, accordati su ritardi fisici fissi e applicati a feature apprese anziché ai pixel, senza che le feature apprese debbano per questo descrivere un movimento.
+
+
+% ==============================================================================
+%  Costo e compressione
+% ==============================================================================
+% Fonti: artifacts/reports/b_minus_compression/rank_sweep.json (sola inferenza, nessun riaddestramento; profilo per
+% passo su 12 clip, 495 passi DVS-Lip e 469 THU) e pred_*.npz per i confronti appaiati (DVS-Lip q64: 96 corretti /
+% 82 introdotti, p=0,33, predizioni uguali nel 90% dei campioni; THU q32: 7/4, p=0,55, 96%). Base condivisa: SVD in FP64
+% della concatenazione verticale delle W_k, P = primi q vettori singolari destri, D_k = W_k P^T
+% (docs/COMPRESSIONE_RI_E_SSA_TEMPORALE.md). Costi del sito: conteggi analitici per posizione e passo (mixer a ritardi
+% K C^2, IRM K C^2 + (K+2) C r, compresso (K+1) C q + (K+2) C r; stato d_K x canali), 64 posizioni su DVS-Lip e 374 su THU.
+% Rete del riferimento: profilo dell'IRM denso con il solo sito sostituito (stato coerente con E6: 0,811 e 5,72 M).
+% Figura: figure_scripts/cap5/fig_compressione.py.
+% PROVVISORIO su DVS-Lip: lo sweep usa il checkpoint 20261026_112001, quindi si mostrano solo differenze dal proprio
+% denso. Aggiornare con lo sweep sul checkpoint di riferimento 20261112_082513 e, quando disponibile, aggiungere il
+% profilo per campione del modello compresso (formato E6).
+
+\section{Costo e compressione}
+\label{sec:compressione}
+
+Nella forma descritta finora l'IRM antisimmetrico costa poco più del mixer a ritardi che sostituisce, con il $2{,}5\%$ di parametri in più nell'intera rete e un quarto di stato in più nel suo sito (sezione~\ref{sec:relazione}). Questa sezione mostra che il costo si può ridurre dopo l'addestramento, senza riaddestrare la rete, fino a scendere sotto quello del mixer a ritardi.
+
+\paragraph{Una base comune per le quattro bande}
+La maggior parte dei parametri e delle moltiplicazioni del modulo sta nelle quattro matrici $W_k$, di $C\times C$ elementi, che riportano nei canali i riassunti delle bande. Le matrici sono apprese separatamente, ma leggono tutte lo stesso segnale, la corrente del secondo patch embedding, ed è plausibile che usino in buona parte le stesse direzioni dello spazio dei canali. In tal caso basta un numero ridotto di direzioni comuni per descriverle tutte.
+
+Per trovarle si impilano le quattro matrici una sopra l'altra e se ne calcola la decomposizione ai valori singolari. Le $q$ direzioni più importanti dello spazio dei canali, cioè i primi $q$ vettori singolari destri, formano una base condivisa $P\in\mathbb R^{q\times C}$, e ogni matrice viene sostituita dalla sua approssimazione in quella base,
+\begin{equation}
+\label{eq:base_condivisa}
+W_k\approx D_k\,P,
+\qquad
+D_k=W_k\,P^{\top}\in\mathbb R^{C\times q}.
+\end{equation}
+Poiché la media di banda e la proiezione sono entrambe lineari, il loro ordine si può scambiare, e $W_k\,m_{k,t}\approx D_k\,\overline{(Pz)}_{k,t}$, dove la barra indica la media nella banda. Basta allora proiettare la corrente presente una sola volta, nel momento in cui la si scrive nella memoria, e conservare $Pz$, di $q$ valori, al posto di $z$, che ne ha $C$. Il ramo relazionale non cambia. Le proiezioni $Az$ e $Bz$ restano quelle addestrate, e il rango $r=16$ della relazione non va confuso con il rango $q$ della base. Il resto della rete resta identico, e la compressione non richiede alcun addestramento.
+
+La quota della somma dei quadrati dei valori singolari che la base conserva, detta energia dei pesi, misura quanto fedelmente le matrici vengano ricostruite. Non misura l'accuratezza conservata, né l'energia consumata dal calcolo.
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=\textwidth]{images/cap5/cap5_compressione.pdf}
+    \caption[Compressione dell'IRM antisimmetrico dopo l'addestramento]{Compressione dell'IRM antisimmetrico dopo l'addestramento, senza riaddestramento, al variare del rango $q$ della base condivisa. (a)~Energia dei pesi $W_k$ conservata. (b)~Differenza di Macro-F1 rispetto al modello non compresso, sulla validazione di sviluppo. I simboli grandi indicano i ranghi scelti.}
+    \label{fig:compressione}
+\end{figure}
+
+\paragraph{Quanto si può comprimere}
+La figura~\ref{fig:compressione} riporta, al variare di $q$, l'energia conservata e la variazione di Macro-F1 rispetto al modello non compresso. I due dataset si comportano in modo molto diverso. Su THU-EACT-50-CHL le matrici sono fortemente ridondanti. Con 16 direzioni su 128 la base conserva l'$83\%$ dell'energia, e la Macro-F1 perde meno di mezzo punto. Su DVS-Lip le stesse 16 direzioni conservano poco più della metà dell'energia, e la Macro-F1 perde quasi tre punti. Le quattro bande di DVS-Lip sembrano usare direzioni più diverse tra loro.
+
+Come compromesso si sceglie $q=64$ su DVS-Lip, metà dei canali, e $q=32$ su THU-EACT-50-CHL, un quarto. In entrambi i casi la base conserva oltre il $91\%$ dell'energia, e il modello compresso resta allo stesso livello di quello di partenza. Le differenze di Macro-F1, $+0{,}6$ e $+0{,}8$ punti, non si distinguono da zero nel confronto appaiato, e le predizioni dei due modelli coincidono sul $90\%$ dei campioni di DVS-Lip e sul $96\%$ di quelli di THU-EACT-50-CHL. I due ranghi sono stati scelti osservando questa stessa curva, e i piccoli guadagni non vanno letti come un beneficio della compressione. Indicano soltanto che, a questi ranghi, la compressione non toglie nulla di misurabile.
+
+\paragraph{Che cosa costa il modulo compresso}
+La tabella~\ref{tab:costo_compressione} confronta il costo del sito e dell'intera rete nei tre casi, il mixer a ritardi del modello di riferimento, l'IRM antisimmetrico e la sua versione compressa. Le moltiplicazioni sono contate per passo. Nel sito si tratta di moltiplicazioni con accumulo, perché la memoria opera sulle correnti e non sugli spike, e gli accumuli guidati dagli spike nel resto della rete non cambiano.
+
+\begin{table}[t]
+\centering
+\small
+\renewcommand{\arraystretch}{1.2}
+\caption[Costo del mixer a ritardi e dell'IRM antisimmetrico, denso e compresso]{Costo del mixer a ritardi del modello di riferimento e dell'IRM antisimmetrico, denso e compresso ($q=64$ su DVS-Lip, $q=32$ su THU-EACT-50-CHL), nel secondo patch embedding e nell'intera rete. Le moltiplicazioni con accumulo sono per passo, lo stato è espresso in migliaia di valori persistenti.}
+\label{tab:costo_compressione}
+\begin{adjustbox}{max width=\textwidth}
+\begin{tabular}{@{}l r r r r r r@{}}
+\hline
+ & \multicolumn{3}{c}{\textbf{DVS-Lip}} & \multicolumn{3}{c}{\textbf{THU-EACT-50-CHL}} \\
+ & \textbf{Parametri} & \textbf{MAC} & \textbf{Stato} & \textbf{Parametri} & \textbf{MAC} & \textbf{Stato} \\
+ & & [M] & [migliaia] & & [M] & [migliaia] \\
+\hline
+\multicolumn{7}{@{}l}{\emph{Secondo patch embedding}} \\
+\quad mixer a ritardi & $65\,536$ & $4{,}19$ & $123$ & $65\,536$ & $24{,}51$ & $1\,101$ \\
+\quad IRM antisimmetrico & $77\,832$ & $4{,}98$ & $154$ & $77\,832$ & $29{,}11$ & $1\,376$ \\
+\quad IRM compresso & $53\,256$ & $3{,}41$ & $92$ & $32\,776$ & $12{,}26$ & $551$ \\
+\multicolumn{7}{@{}l}{\emph{Intera rete}} \\
+\quad modello di riferimento & $501\,028$ & $37{,}6$ & $811$ & $494\,578$ & $214{,}7$ & $5\,721$ \\
+\quad IRM antisimmetrico & $513\,324$ & $38{,}4$ & $842$ & $506\,874$ & $219{,}3$ & $5\,996$ \\
+\quad IRM compresso & $488\,748$ & $36{,}8$ & $780$ & $461\,818$ & $202{,}5$ & $5\,171$ \\
+\hline
+\end{tabular}
+\end{adjustbox}
+\end{table}
+
+Compresso, l'IRM costa meno del mixer a ritardi che sostituisce in ogni voce. Su DVS-Lip il sito ha circa il $19\%$ di parametri e di moltiplicazioni in meno e un quarto di stato in meno, su THU-EACT-50-CHL la metà in ciascuna voce. Sull'intera rete il risparmio è più piccolo, perché il sito è una parte limitata del modello, ma il segno non cambia. Il modello compresso ha meno parametri, meno moltiplicazioni e meno stato del modello di riferimento su entrambi i dataset. Le moltiplicazioni elemento per elemento della relazione, non incluse nella tabella, sono circa $41$ mila per passo su DVS-Lip e $239$ mila su THU-EACT-50-CHL, circa un millesimo delle moltiplicazioni con accumulo.
+
+\paragraph{Il modello finale}
+Il capitolo si chiude con un modello compatto, l'IRM antisimmetrico compresso, con $q=64$ su DVS-Lip e $q=32$ su THU-EACT-50-CHL. Su THU-EACT-50-CHL supera il modello di riferimento di oltre otto punti di Macro-F1 con meno parametri, meno moltiplicazioni e meno stato. Su DVS-Lip resta al livello del riferimento, a un costo leggermente inferiore. Il confronto tra passato e presente non richiede quindi un budget più grande, ma un uso diverso dello stesso budget, nello spirito della riallocazione del capitolo~\ref{chap:riallocazione_budget}. Il capitolo~\ref{chap:scalabilita} esamina come la soluzione si comporti al crescere del budget e con un addestramento diverso, e che cosa limiti ancora DVS-Lip.

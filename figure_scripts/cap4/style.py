@@ -17,6 +17,8 @@ CLOCK = {
     "E0": dict(color="#2a78d6", marker="o", label="Finestra fissa"),
     "FEC": dict(color="#eb6834", marker="s", label="Eventi costanti"),
     "VC": dict(color="#1baf7a", marker="^", label="Lunghezza variabile"),
+    # slot 4 della palette validata: controllo a durata normalizzata (sezione 4.3)
+    "FBC": dict(color="#eda100", marker="D", label="Durata normalizzata"),
 }
 NEUTRAL = "#9a9993"
 

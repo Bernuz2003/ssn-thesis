@@ -1,0 +1,286 @@
+\chapter{Scalabilità, generalizzazione e configurazioni finali}
+\label{chap:scalabilita}
+
+% Stato al 2026-11-17: struttura da docs/STRUTTURA_NARRATIVA_E_RISULTATI_CAPITOLI_5_6_7.md (repository di ricerca).
+% Capitolo completo (6.1-6.6). Segnaposto: riferimento VC a 1M/2M, distillazione verso lo studente da 2M, IRM compresso
+% su DVS-Lip nella tabella finale (sweep sul checkpoint di riferimento).
+% Numeri e confronti appaiati da figure_scripts/cap6/risultati6.py (riusa cap5/risultati5.py). Su DVS-Lip l'IRM
+% antisimmetrico compatto e' VC_RI_M--interval-antisymmetric-r16__20261112_082513_589585__seed42 (Macro-F1 57,47).
+% Capacita': VC_RI_M--interval-antisymmetric-r16-capacity-{1m,2m} (embed_dim 192 e 256, rango 16), DVS-Lip
+% 20261115_231446 / 20261115_232156, THU 20261116_001654 / 20261116_001738.
+% SEGNAPOSTO: modello di riferimento VC a 1M/2M (job Legion 2108824-2108827), non ancora in locale.
+
+Il capitolo precedente si è chiuso con un modello compatto che su THU-EACT-50-CHL supera nettamente il modello di riferimento a un costo inferiore, mentre su DVS-Lip resta al suo livello. Restano aperte due domande. La prima riguarda il budget. Il vantaggio della memoria relazionale è stato misurato con circa mezzo milione di parametri, e non è scontato che resista quando la rete cresce. La seconda riguarda DVS-Lip. Se la memoria non sposta il risultato su questo dataset, il suo limite va cercato altrove.
+
+Il capitolo affronta le due domande in quest'ordine. Esamina prima l'IRM antisimmetrico a uno e due milioni di parametri, poi il rapporto tra adattamento ai dati di addestramento e generalizzazione nei due dataset, e da qui due interventi sull'addestramento che non cambiano l'architettura, la distillazione e l'auto-ensemble. Seguono un esame degli errori, per durata dei campioni e per tipo, e della robustezza al ritmo, e infine una sintesi delle configurazioni finali. Tutte le prove usano la rappresentazione a lunghezza variabile e la validazione di sviluppo, salvo dove indicato.
+
+
+% ==============================================================================
+%  Capacita'
+% ==============================================================================
+
+\section{L'IRM al crescere del budget}
+\label{sec:capacita_irm}
+
+La prova allarga la rete da 128 a 192 e a 256 canali, come per il modello di riferimento nella sezione~\ref{sec:solidita_riferimento}, e porta i parametri da circa mezzo a circa uno e due milioni. Ogni modello è addestrato da zero con la stessa ricetta. Il rango della relazione resta $r=16$, ma il modulo cresce insieme alla rete, perché le matrici $W_k$ crescono con il quadrato del numero di canali e le proiezioni $A$, $B$ e $U_k$ in proporzione a esso. Il costo cresce di conseguenza. A 256 canali il modello di riferimento esegue quasi quattro volte le moltiplicazioni della versione compatta e conserva il doppio dello stato (tabella~\ref{tab:capacita_lip}), e l'IRM antisimmetrico vi aggiunge circa l'$1\%$ dei parametri.
+
+\begin{table}[t]
+\centering
+\small
+\renewcommand{\arraystretch}{1.2}
+\caption[L'IRM antisimmetrico al crescere della larghezza]{Macro-F1 [\%] dell'IRM antisimmetrico e del modello di riferimento al crescere della larghezza, sulla validazione di sviluppo. I parametri sono quelli dell'IRM su DVS-Lip, su THU-EACT-50-CHL sono di poco inferiori per la testa più piccola.}
+\label{tab:capacita_irm}
+\begin{tabular}{@{}l r r r r r@{}}
+\hline
+ & & \multicolumn{2}{c}{\textbf{DVS-Lip}} & \multicolumn{2}{c}{\textbf{THU-EACT-50-CHL}} \\
+\textbf{Larghezza} & \textbf{Parametri} & \textbf{IRM} & \textbf{Riferimento} & \textbf{IRM} & \textbf{Riferimento} \\
+\hline
+128 canali & $513\,324$ & $57{,}5$ & $56{,}9$ & $62{,}6$ & $54{,}9$ \\
+192 canali & $1\,132\,908$ & $61{,}8$ & \emph{in corso} & $65{,}6$ & \emph{in corso} \\
+256 canali & $1\,994\,476$ & $64{,}0$ & \emph{in corso} & $68{,}9$ & \emph{in corso} \\
+\hline
+\end{tabular}
+\end{table}
+
+La tabella~\ref{tab:capacita_irm} riporta i risultati. L'IRM antisimmetrico migliora con la capacità su entrambi i dataset, e la media delle ultime epoche segue lo stesso andamento. Su DVS-Lip passa da $57{,}5$ a $61{,}8$ e a $64{,}0$ di Macro-F1, con guadagni nettamente significativi già a un milione di parametri. Su THU-EACT-50-CHL passa da $62{,}6$ a $65{,}6$ e a $68{,}9$, e il guadagno diventa significativo a due milioni. Su DVS-Lip, dove la memoria non spostava il risultato del modello compatto, la capacità lo sposta di oltre sei punti.
+
+Resta da stabilire se il vantaggio dell'IRM sul modello di riferimento si conservi a pari larghezza. Le prove del capitolo~\ref{chap:riallocazione_budget} alle stesse larghezze usano la finestra fissa, e un ingresso diverso non può fare da controllo. \textbf{[Segnaposto: modello di riferimento con la rappresentazione a lunghezza variabile a 192 e 256 canali, in corso. Completare la tabella e commentare il margine dell'IRM a pari larghezza.]} Anche la compressione della sezione~\ref{sec:compressione} è stata misurata soltanto sul modello compatto, e non si può dare per scontato che le matrici dei modelli più grandi si lascino ridurre nella stessa misura.
+
+
+% ==============================================================================
+%  Generalizzazione
+% ==============================================================================
+% Accuratezza di addestramento: media delle ultime 16 epoche di train_accuracy (history.csv); validazione: checkpoint
+% selezionato. Voto: risultati6.voto, membri nell'ordine di VOTO (parita' al primo membro), stessi insegnanti della
+% distillazione. DVS-Lip: membri 57,13/57,53/57,60/57,40/56,76, media 57,28, voto 65,18 acc e 65,20 F1, riconosciuti
+% da tutti 27,7%, da nessuno 16,5%. THU: membri 69,17/66,67/66,67/65,41/66,17, media 66,82, voto 70,93 acc e 64,14 F1,
+% da tutti 50,6%, da nessuno 21,3%.
+
+\section{Adattarsi ai dati o generalizzare}
+\label{sec:generalizzazione}
+
+Per capire perché i due dataset rispondano in modo così diverso alla memoria conviene guardare, oltre alla validazione, all'accuratezza raggiunta sui dati di addestramento (figura~\ref{fig:generalizzazione}a). Nel regime compatto i due dataset si trovano in condizioni opposte. Su THU-EACT-50-CHL il modello di riferimento non riesce ad adattarsi del tutto ai dati di addestramento, e nelle ultime epoche ne riconosce circa tre campioni su quattro. L'IRM antisimmetrico porta questa quota all'$83\%$, e la validazione cresce di pari passo. Qui una capacità temporale utile aiuta la rete a descrivere meglio i dati di addestramento, e il guadagno si trasferisce alla validazione. Su DVS-Lip, invece, già il modello compatto riconosce quasi tutti i campioni di addestramento, il $97\%$ il riferimento e il $99\%$ l'IRM, ma meno del $58\%$ di quelli di validazione. Il limite non sta nell'adattarsi ai dati ma nel generalizzare a campioni nuovi, e una memoria più ricca non vi pone rimedio.
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=\textwidth]{images/cap6/cap6_generalizzazione.pdf}
+    \caption[Adattamento ai dati di addestramento e accordo fra varianti]{Adattamento ai dati di addestramento e accordo fra varianti. (a)~Accuratezza sui dati di addestramento, media delle ultime 16 epoche, e sulla validazione di sviluppo, per il modello di riferimento e per l'IRM antisimmetrico a $0{,}5$, 1 e 2 milioni di parametri. (b)~Quota dei campioni di validazione riconosciuti da nessuna, da una, \dots, da tutte e cinque le varianti compatte della tabella~\ref{tab:voto}.}
+    \label{fig:generalizzazione}
+\end{figure}
+
+Al crescere della capacità i due quadri si avvicinano. A uno e due milioni di parametri anche su THU-EACT-50-CHL l'addestramento raggiunge il $99$--$100\%$, e su entrambi i dataset la validazione continua a migliorare. Su DVS-Lip i modelli più grandi generalizzano meglio pur adattandosi completamente ai dati. La differenza tra i due dataset riguarda quindi il regime compatto più che la natura dei compiti, e anche su THU-EACT-50-CHL, con la capacità sufficiente, compare un divario tra addestramento e validazione.
+
+Un secondo indizio viene dal confronto tra varianti diverse. La sezione~\ref{sec:risultati_irm} ha mostrato che su DVS-Lip il modello di riferimento e l'IRM antisimmetrico danno esiti diversi su quasi tre campioni su dieci, con un saldo quasi nullo. La figura~\ref{fig:generalizzazione}b estende l'osservazione a cinque varianti compatte del capitolo~\ref{chap:memoria_relazionale} e conta, per ogni campione, quante di esse lo riconoscono. Su DVS-Lip le varianti sono il modello di riferimento, l'IRM antisimmetrico, l'IRM nel primo e in entrambi i patch embedding e la relazione a punti, su THU-EACT-50-CHL l'IRM antisimmetrico, l'IRM in entrambi i patch embedding, quello con instradamento, la relazione a punti e le tracce guidate dagli eventi. Su THU-EACT-50-CHL le varianti tendono a concordare. Metà dei campioni è riconosciuta da tutte e cinque e un quinto da nessuna, e la difficoltà sembra legata soprattutto al campione. Su DVS-Lip i campioni si distribuiscono invece su tutti i livelli. Soltanto il $28\%$ è riconosciuto da tutte le varianti, e più della metà da alcune ma non da altre. Varianti di accuratezza quasi identica sbagliano in buona parte campioni diversi.
+
+\begin{table}[t]
+\centering
+\small
+\renewcommand{\arraystretch}{1.2}
+\caption[Voto a maggioranza fra cinque varianti compatte]{Voto a maggioranza fra le cinque varianti compatte della figura~\ref{fig:generalizzazione}b, sulla validazione di sviluppo. In caso di parità prevale la classe indicata dalla prima variante, nell'ordine in cui sono elencate nel testo. Valori in percentuale.}
+\label{tab:voto}
+\begin{tabular}{@{}l r r r r@{}}
+\hline
+ & \multicolumn{2}{c}{\textbf{Accuratezza delle varianti}} & \multicolumn{2}{c}{\textbf{Voto}} \\
+\textbf{Dataset} & \textbf{media} & \textbf{migliore} & \textbf{Accuratezza} & \textbf{Macro-F1} \\
+\hline
+DVS-Lip & $57{,}3$ & $57{,}6$ & $65{,}2$ & $65{,}2$ \\
+THU-EACT-50-CHL & $66{,}8$ & $69{,}2$ & $70{,}9$ & $64{,}1$ \\
+\hline
+\end{tabular}
+\end{table}
+
+Lo si vede anche combinando le cinque varianti con un voto a maggioranza (tabella~\ref{tab:voto}). Su DVS-Lip il voto raggiunge il $65{,}2\%$ di accuratezza, quasi otto punti sopra la media delle varianti e sopra la migliore di esse. Su THU-EACT-50-CHL arriva al $70{,}9\%$, meno di due punti sopra la variante migliore. Su DVS-Lip, dunque, buona parte di ciò che serve a riconoscere i campioni di validazione è già alla portata delle varianti compatte, ma ciascuna ne coglie una parte diversa.
+
+La prova ha due limiti. Le varianti hanno architetture diverse, e non misura da sola quanto cambi lo stesso modello addestrato più volte. Il voto, inoltre, non è un limite superiore per una singola rete. Indica però una strada. Se varianti diverse contengono conoscenze complementari, si può provare a trasferirle in un unico modello compatto durante l'addestramento, senza pagare in inferenza il costo di cinque reti. È l'idea della distillazione, oggetto della sezione successiva.
+
+
+% ==============================================================================
+%  Distillazione e auto-ensemble
+% ==============================================================================
+% Fonti: src/etsr/training/distillation.py (perdita (1-w) CE + w T^2 KL(p_T || softmax(z/T)), p_T media delle
+% distribuzioni temperate degli insegnanti congelati sullo stesso batch aumentato dello studente; T=4, w=0,9;
+% studente inizializzato da zero) e src/etsr/training/self_ensemble.py (media mobile per campione delle proprie predizioni
+% temperate, momento 0,8, peso crescente linearmente fino a 0,9, bersaglio usato solo se la sua classe piu' probabile
+% coincide con l'etichetta). Insegnanti DVS-Lip: IRM antisimmetrico, IRM nel primo e in entrambi i patch embedding,
+% relazione a punti, riferimento; THU: IRM antisimmetrico, IRM in entrambi i patch embedding, IRM con instradamento,
+% relazione a punti, tracce guidate dagli eventi. Durate di addestramento dai run.log, stesso tipo di macchina:
+% distillazione circa 2,5 volte l'IRM su entrambi i dataset, auto-ensemble circa +10%.
+% Confronti appaiati (accuratezza): DVS-Lip IRM -> distillazione 455/287 p=7e-10; THU 15/39 p=0,0015;
+% IRM -> auto-ensemble DVS-Lip 411/359 p=0,066, THU 14/23 p=0,19; riferimento -> auto-ensemble DVS-Lip p=0,15, THU p=0,18.
+% SEGNAPOSTO: distillazione verso uno studente di circa 2M parametri (selezione degli insegnanti in corso).
+
+\section{Distillazione e auto-ensemble}
+\label{sec:distillazione}
+
+Le due tecniche di questa sezione intervengono soltanto sull'addestramento. L'architettura resta quella dell'IRM antisimmetrico compatto, e con essa il costo in inferenza.
+
+\paragraph{Distillazione da cinque insegnanti}
+La distillazione addestra un modello, detto studente, a imitare le predizioni di altri modelli già addestrati, detti insegnanti~\cite{hinton2015distilling}. Gli insegnanti sono qui cinque varianti compatte del capitolo~\ref{chap:memoria_relazionale}, le stesse architetture del voto della sezione~\ref{sec:generalizzazione}, e restano congelati per tutto l'addestramento. A ogni passo ricevono lo stesso batch dello studente, e le loro distribuzioni di probabilità sulle classi, ammorbidite da una temperatura $T$, vengono mediate in un'unica distribuzione $\bar p_T$. Lo studente, che ha l'architettura dell'IRM compatto e parte da pesi casuali, minimizza
+\begin{equation}
+\label{eq:distillazione}
+\mathcal L=(1-w)\,\mathrm{CE}(z,y)+w\,T^{2}\,\mathrm{KL}\bigl(\bar p_T\,\big\|\,\mathrm{softmax}(z/T)\bigr),
+\end{equation}
+dove $z$ sono i suoi logit, $y$ l'etichetta, CE l'entropia incrociata, KL la divergenza di Kullback-Leibler, $T=4$ e $w=0{,}9$. Con la temperatura diventano visibili anche le classi a cui gli insegnanti assegnano una probabilità piccola, cioè quali parole o azioni essi considerino simili a quella corretta. È un'informazione che l'etichetta da sola non contiene.
+
+\begin{table}[t]
+\centering
+\small
+\renewcommand{\arraystretch}{1.2}
+\caption[Interventi sull'addestramento]{Interventi sull'addestramento, a parità di architettura e di costo in inferenza. Macro-F1 [\%] sulla validazione di sviluppo. L'asterisco indica una differenza significativa nel confronto appaiato con la stessa architettura addestrata in modo standard.}
+\label{tab:addestramento}
+\begin{tabular}{@{}l r r@{}}
+\hline
+\textbf{Modello} & \textbf{DVS-Lip} & \textbf{THU-EACT-50-CHL} \\
+\hline
+Modello di riferimento & $56{,}9$ & $54{,}9$ \\
+\quad con auto-ensemble & $58{,}2$ & $52{,}7$ \\
+IRM antisimmetrico & $57{,}5$ & $62{,}6$ \\
+\quad con auto-ensemble & $58{,}9$ & $61{,}0$ \\
+\quad con distillazione & $62{,}8^{*}$ & $56{,}0^{*}$ \\
+\hline
+\end{tabular}
+\end{table}
+
+Su DVS-Lip la distillazione porta l'IRM compatto da $57{,}5$ a $62{,}8$ di Macro-F1 (tabella~\ref{tab:addestramento}), il guadagno più ampio osservato a questa dimensione, con 455 campioni corretti e 287 nuovi errori rispetto all'addestramento standard. Lo studente recupera circa due terzi della distanza tra le singole varianti e il loro voto, pur restando un solo modello. Si adatta anche un po' meno ai dati di addestramento, che riconosce al $95\%$ anziché al $99\%$, e generalizza molto meglio. Su THU-EACT-50-CHL la stessa ricetta fa il contrario, e la Macro-F1 scende da $62{,}6$ a $56{,}0$, anche qui in modo significativo.
+
+La differenza tra i due dataset è coerente con la sezione~\ref{sec:generalizzazione}. Su DVS-Lip il voto di varianti simili agli insegnanti supera di quasi otto punti ciascuna di esse, e la loro media contiene informazione che nessun modello compatto possiede da solo. Su THU-EACT-50-CHL lo studente ha l'architettura del migliore degli insegnanti, gli altri quattro sono più deboli, e il loro voto supera l'IRM di meno di due punti. Imitarne la media significa in parte imitarne gli errori. Inoltre il modello compatto, che su THU-EACT-50-CHL non si adatta del tutto ai dati di addestramento, con il bersaglio degli insegnanti vi si adatta ancora meno, dall'$83\%$ al $76\%$. Gli insegnanti dei due dataset non sono gli stessi, e la prova non permette di separare queste spiegazioni, né di stabilire se il guadagno su DVS-Lip venga dalla complementarità degli insegnanti o da un effetto di regolarizzazione.
+
+Il costo si sposta sull'addestramento. In inferenza lo studente è identico all'IRM compatto, ma per addestrarlo servono cinque insegnanti già addestrati, e ogni passo richiede anche il loro calcolo in avanti. Nelle prove svolte l'addestramento dello studente è durato circa due volte e mezzo quello dell'IRM, senza contare quello degli insegnanti. \textbf{[Segnaposto: distillazione verso uno studente di circa due milioni di parametri, in corso. Capacità e distillazione non si sommano necessariamente.]}
+
+\paragraph{Auto-ensemble}
+L'auto-ensemble cerca un effetto simile senza insegnanti esterni. Per ogni campione di addestramento la rete conserva una media mobile, lungo le epoche, delle proprie predizioni ammorbidite~\cite{laine2017temporal}, e la usa come bersaglio al posto di $\bar p_T$ nell'equazione~\eqref{eq:distillazione}. Il peso del bersaglio cresce linearmente durante l'addestramento fino a $0{,}9$~\cite{kim2021selfknowledge}, e un campione lo usa soltanto quando la classe più probabile della media coincide con l'etichetta, così che la rete non venga spinta verso i propri errori. Il costo aggiuntivo è minimo, una distribuzione di probabilità da conservare per ogni campione di addestramento, e l'addestramento dura circa il $10\%$ in più.
+
+Su DVS-Lip l'auto-ensemble migliora di circa un punto e mezzo sia il modello di riferimento sia l'IRM, in modo coerente ma non significativo. Su THU-EACT-50-CHL li peggiora di una quantità simile, anch'essa non significativa. Il confronto con la distillazione suggerisce che il grosso del guadagno su DVS-Lip non venga dall'ammorbidimento dei bersagli in sé, ma dall'informazione portata da modelli diversi.
+
+
+% ==============================================================================
+%  Dove sbagliano i modelli
+% ==============================================================================
+% Fonti: quartili di durata da risultati6.quartili (bucket dai passi validi del riferimento, soglie DVS-Lip 36/40/44,
+% THU 33/39/43 passi); test THU da artifacts/reports/c0_ri_diagnostics/csv/E1.csv (quartili del test, 20-35/36-43/44-49/
+% 50-78 passi); gruppi di parole da summary.json (class_group_accuracies); classi THU da risultati6.classi_thu.
+% Figura: figure_scripts/cap6/fig_durata.py.
+
+\section{Dove sbagliano i modelli}
+\label{sec:errori}
+
+Le sezioni precedenti hanno mostrato tre leve con effetti diversi, la memoria relazionale, la capacità e la distillazione. Questa sezione guarda a quali errori ciascuna corregga, attraverso la durata dei campioni, le parole simili di DVS-Lip e le classi di THU-EACT-50-CHL.
+
+\paragraph{Durata dei campioni}
+I campioni di validazione sono divisi in quattro gruppi di uguale numerosità secondo il numero di passi, dal più breve al più lungo (figura~\ref{fig:durata}a). Su DVS-Lip i campioni brevi sono i più difficili per tutti i modelli. Il riferimento passa dal $50\%$ di accuratezza nel quarto più breve al $68\%$ in quello più lungo, e l'IRM ha lo stesso andamento. Capacità e distillazione alzano tutti i gruppi, un po' di più quelli brevi, ma il divario resta di oltre quattordici punti. Durata, parola pronunciata e difficoltà del campione non sono però indipendenti, e la prova non dice che i campioni brevi siano difficili per mancanza di passato.
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=\textwidth]{images/cap6/cap6_durata.pdf}
+    \caption[Accuratezza per durata dei campioni]{Accuratezza per durata dei campioni, in quattro gruppi di uguale numerosità dal più breve al più lungo. (a)~DVS-Lip, validazione di sviluppo. (b)~THU-EACT-50-CHL, guadagno di accuratezza dell'IRM antisimmetrico sul modello di riferimento nella validazione di sviluppo e nel test ufficiale. I gruppi del test sono calcolati sulle durate del test.}
+    \label{fig:durata}
+\end{figure}
+
+Su THU-EACT-50-CHL la validazione mostra un quadro diverso. Il riferimento peggiora con la durata, dal $66\%$ al $56\%$, mentre l'IRM resta stabile, e il suo guadagno cresce con la lunghezza dei campioni. Sul test ufficiale, però, questo andamento non si ripete (figura~\ref{fig:durata}b), e l'IRM guadagna di più sui campioni brevi. Con poche decine di campioni per gruppo la forma del guadagno non è stabile, e la sola conclusione che regge su entrambe le partizioni è più semplice. Il guadagno dell'IRM non è confinato a una fascia di durate.
+
+\paragraph{Parole simili su DVS-Lip}
+DVS-Lip contiene 25 coppie di parole visivamente simili, che formano il gruppo su cui si calcola Acc1, mentre le altre 50 parole formano quello di Acc2 (sezione~\ref{subsec:dvslip}). La tabella~\ref{tab:gruppi_lip} scompone gli errori del primo gruppo in scambi tra le due parole della stessa coppia, come \emph{spend} e \emph{spent} o \emph{price} e \emph{press}, ed errori verso tutte le altre parole.
+
+\begin{table}[t]
+\centering
+\small
+\renewcommand{\arraystretch}{1.2}
+\caption[Errori sulle parole simili e sulle parole comuni di DVS-Lip]{Errori sui due gruppi di parole di DVS-Lip, sulla validazione di sviluppo. Acc1 e Acc2 in percentuale, errori come numero di campioni su 1\,497 del primo gruppo e 1\,498 del secondo. Gli scambi nella coppia sono gli errori in cui una parola viene scambiata con l'altra della stessa coppia.}
+\label{tab:gruppi_lip}
+\begin{adjustbox}{max width=\textwidth}
+\begin{tabular}{@{}l r r r r r@{}}
+\hline
+ & & & \multicolumn{2}{c}{\textbf{Errori, primo gruppo}} & \textbf{Errori,} \\
+\textbf{Modello} & \textbf{Acc1} & \textbf{Acc2} & \textbf{nella coppia} & \textbf{altri} & \textbf{secondo gruppo} \\
+\hline
+Modello di riferimento & $49{,}0$ & $64{,}6$ & $321$ & $443$ & $531$ \\
+IRM antisimmetrico & $49{,}1$ & $65{,}2$ & $322$ & $440$ & $522$ \\
+IRM, 1 milione & $52{,}3$ & $72{,}0$ & $301$ & $413$ & $419$ \\
+IRM, 2 milioni & $53{,}3$ & $74{,}9$ & $326$ & $373$ & $376$ \\
+IRM con distillazione & $54{,}4$ & $71{,}0$ & $304$ & $378$ & $434$ \\
+\hline
+\end{tabular}
+\end{adjustbox}
+\end{table}
+
+Gli scambi dentro la coppia restano tra 300 e 330 in tutti i modelli, circa un campione su cinque del gruppo, e né la memoria, né la capacità, né la distillazione li riducono in modo apprezzabile. I guadagni del modello più grande e dello studente vengono quasi interamente dagli altri errori, che scendono di circa un sesto fra le parole simili e fino a quasi un terzo fra le parole comuni. Le due parole di una coppia differiscono spesso per un dettaglio breve e poco visibile, come una desinenza, e con gli strumenti provati quella differenza resta in gran parte fuori portata. Il conteggio stabile non va però letto come l'errore minimo possibile su queste coppie.
+
+\paragraph{Classi di THU-EACT-50-CHL}
+Su THU-EACT-50-CHL l'IRM antisimmetrico migliora l'F1 di 35 delle 46 classi presenti nella validazione e lo peggiora in 11. Il guadagno è diffuso e non dipende da poche azioni.
+
+
+% ==============================================================================
+%  Robustezza al ritmo
+% ==============================================================================
+% Fonti: artifacts/reports/c0_e0_vc/<dataset>/<E0|VC>/{clean,time_scale_0.5,time_scale_2}_summary.json e robustness.csv
+% (modello di riferimento, sola inferenza, batch 1; eventi conservati con la finestra fissa a x2: 93,7% DVS-Lip, 94,5% THU;
+% con la lunghezza variabile 100%). Addestramento con discretizzazione stocastica: augmentation vc_time_scale_range
+% [0,9; 1,1] (scala log-uniforme) e vc_grid_phase_jitter (fase della griglia uniforme in un passo), src/etsr/data/
+% variable_count.py; run VC_RI_M--interval-antisymmetric-r16-svc (DVS-Lip 58,60 F1, 416/375 p=0,155; THU 60,30 F1,
+% 18/31 p=0,085). Le prove su riscalamenti di +-10% e sulla fase della griglia citate nei vecchi piani non hanno un report
+% verificabile e non sono usate.
+
+\section{Robustezza al ritmo}
+\label{sec:ritmo}
+
+La rappresentazione a lunghezza variabile fissa la durata fisica di un passo, e con essa il significato dei ritardi. Lo stesso movimento eseguito più in fretta o più lentamente occupa però un numero diverso di passi, e il capitolo~\ref{chap:clock_input} ha lasciato aperta la domanda su quanto la rete tolleri questa variazione. La prova moltiplica i tempi degli eventi di ogni campione di validazione per $0{,}5$, come se il movimento fosse eseguito al doppio della velocità, oppure per 2, come se fosse eseguito a metà velocità, e valuta in sola inferenza il modello di riferimento addestrato con la finestra fissa e con la lunghezza variabile.
+
+\begin{table}[t]
+\centering
+\small
+\renewcommand{\arraystretch}{1.2}
+\caption[Accuratezza con i tempi degli eventi riscalati]{Accuratezza [\%] del modello di riferimento sulla validazione di sviluppo, con i tempi degli eventi moltiplicati per $0{,}5$ (movimento due volte più veloce) o per 2 (due volte più lento), in sola inferenza. Con la finestra fissa il campione rallentato perde circa il $6\%$ degli eventi, che cadono oltre la finestra, con la lunghezza variabile nessuno.}
+\label{tab:ritmo}
+\begin{tabular}{@{}l r r r r r r@{}}
+\hline
+ & \multicolumn{3}{c}{\textbf{DVS-Lip}} & \multicolumn{3}{c}{\textbf{THU-EACT-50-CHL}} \\
+\textbf{Rappresentazione} & \textbf{originale} & $\boldsymbol{\times 0{,}5}$ & $\boldsymbol{\times 2}$ & \textbf{originale} & $\boldsymbol{\times 0{,}5}$ & $\boldsymbol{\times 2}$ \\
+\hline
+finestra fissa & $55{,}6$ & $13{,}3$ & $11{,}9$ & $50{,}4$ & $15{,}0$ & $19{,}0$ \\
+lunghezza variabile & $56{,}8$ & $9{,}4$ & $11{,}0$ & $61{,}2$ & $15{,}3$ & $13{,}8$ \\
+\hline
+\end{tabular}
+\end{table}
+
+Il risultato è netto (tabella~\ref{tab:ritmo}). Con entrambe le rappresentazioni l'accuratezza crolla fra il $9\%$ e il $19\%$, qualunque sia il verso del cambiamento. Con la finestra fissa il campione rallentato viene anche troncato, ma con la lunghezza variabile tutti gli eventi restano, e il crollo è lo stesso. La rete non è invariante al ritmo. Riconosce i movimenti alle velocità viste in addestramento, e un fattore due la porta fuori da ciò che conosce. Il limite riguarda il modo in cui la rete ha appreso più che il clock, che rende costante la durata fisica del passo ma non insegna a riconoscere la stessa azione a velocità diverse.
+
+Un'ultima prova ha addestrato l'IRM antisimmetrico variando a caso, a ogni presentazione di un campione, la scala dei tempi entro il $10\%$ e la posizione della griglia dei passi entro un passo. Sulla validazione standard il risultato non cambia in modo significativo, con un guadagno di circa un punto di Macro-F1 su DVS-Lip e una perdita di circa due su THU-EACT-50-CHL. L'effetto di questo addestramento su riscalamenti più ampi non è stato misurato, e l'invarianza al ritmo resta un limite aperto.
+
+
+% ==============================================================================
+%  Configurazioni finali
+% ==============================================================================
+% Valori dalle tabelle precedenti. IRM compresso su THU: rank_sweep.json q32 (63,36 F1; il denso dello sweep coincide con
+% il riferimento, 62,56). SEGNAPOSTO: IRM compresso su DVS-Lip, in attesa dello sweep sul checkpoint di riferimento
+% 20261112_082513; riferimento VC a 1M/2M e distillazione verso lo studente da 2M.
+
+\section{Configurazioni finali}
+\label{sec:configurazioni_finali}
+
+La tabella~\ref{tab:configurazioni_finali} riassume le configurazioni a cui arriva il lavoro, a partire dal modello di riferimento del capitolo~\ref{chap:clock_input}. Le prime quattro hanno lo stesso budget compatto e costi in inferenza quasi identici (tabella~\ref{tab:costo_compressione}), l'ultima quadruplica i parametri.
+
+\begin{table}[t]
+\centering
+\small
+\renewcommand{\arraystretch}{1.2}
+\caption[Configurazioni finali]{Configurazioni finali, sulla validazione di sviluppo. Macro-F1 [\%]. I parametri sono quelli di DVS-Lip. Su THU-EACT-50-CHL il modello compresso, con $q=32$, ne ha $461\,818$.}
+\label{tab:configurazioni_finali}
+\begin{tabular}{@{}l r r r l@{}}
+\hline
+\textbf{Configurazione} & \textbf{Parametri} & \textbf{DVS-Lip} & \textbf{THU-EACT-50-CHL} & \textbf{Sezione} \\
+\hline
+Modello di riferimento & $501\,028$ & $56{,}9$ & $54{,}9$ & \ref{subsec:risultati_clock} \\
+IRM antisimmetrico & $513\,324$ & $57{,}5$ & $62{,}6$ & \ref{sec:risultati_irm} \\
+IRM compresso & $488\,748$ & \emph{in corso} & $63{,}4$ & \ref{sec:compressione} \\
+IRM con distillazione & $513\,324$ & $62{,}8$ & $56{,}0$ & \ref{sec:distillazione} \\
+\hline
+IRM, 2 milioni & $1\,994\,476$ & $64{,}0$ & $68{,}9$ & \ref{sec:capacita_irm} \\
+\hline
+\end{tabular}
+\end{table}
+
+Ne emergono due punti di interesse. Il primo è un modello compatto ed efficiente, l'IRM antisimmetrico compresso. Su THU-EACT-50-CHL supera il riferimento di oltre otto punti con meno parametri, meno moltiplicazioni e meno stato, e su DVS-Lip resta al suo livello. Su DVS-Lip la stessa architettura compatta, addestrata con la distillazione, arriva a $62{,}8$, oltre il modello da un milione di parametri, senza alcun costo aggiuntivo in inferenza. La ricetta di addestramento, però, dipende dal dataset, perché su THU-EACT-50-CHL la stessa distillazione peggiora il risultato. Il secondo punto è il modello da due milioni di parametri, il migliore su entrambi i dataset, che paga il risultato con circa quattro volte le moltiplicazioni del modello compatto (tabella~\ref{tab:capacita_lip}).
+
+Alcune combinazioni restano da verificare. La compressione è stata misurata soltanto sul modello compatto addestrato in modo standard, e nulla garantisce che lo studente della distillazione o il modello più grande si lascino ridurre nella stessa misura. Allo stesso modo, capacità e distillazione non sono ancora state combinate. \textbf{[Segnaposto: aggiornare la tabella con il modello compresso su DVS-Lip, con il riferimento a 1 e 2 milioni di parametri e con l'eventuale distillazione verso il modello più grande.]}
+
+In sintesi, la memoria relazionale cresce con il budget e conserva il suo vantaggio sul compito in cui il passato conta di più. Su DVS-Lip il limite del modello compatto non sta nella memoria ma nella generalizzazione, e cede alla capacità e alla distillazione, mentre le confusioni tra parole quasi identiche resistono a tutte le leve provate, e nessuna configurazione è invariante al ritmo. Il capitolo successivo riprende le domande della tesi alla luce di questi risultati.

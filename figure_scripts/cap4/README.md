@@ -14,5 +14,9 @@ Fonti dei dati:
 - `artifacts/reports/dvsgesture/mechanistic/dvsgesture_c0_fixed_event_count__*/record.npz`: predizioni FEC.
 - `data/DvsGesture/events/train/6/user17_led__06.npz`: campione raw per le figure dei tre clock e dell'aliasing.
 - Valori di Macro-F1 in `fig_risultati.py`: summary.json dei run elencati nel commento in testa al capitolo.
+- `fig_coda.py` produce un'unica figura a tre pannelli (`cap4_coda`): coda vuota, calcolo speso nella coda e
+  accuratezza con e senza coda (sostituisce le vecchie `cap4_coda_vuota` e `cap4_dipendenza_coda`).
+- `fig_durata_normalizzata.py`: accuratezza per quartili di durata su DVS-Lip e THU-EACT-50-CHL con finestra fissa,
+  durata normalizzata (run `FBC_C0_M--vc-horizon`, predizioni in `validation_predictions.csv`) e lunghezza variabile.
 
 Le anteprime PNG finiscono in `anteprime/` (non incluse nella tesi).

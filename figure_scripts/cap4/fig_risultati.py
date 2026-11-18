@@ -34,7 +34,7 @@ for ax, (name, row) in zip(axes, R.items()):
     ax.set_title(name, fontsize=8.5)
 axes[0].set_ylabel(r"Macro-F1 [\%]")
 handles = [Line2D([], [], marker=CLOCK[k]['marker'], linestyle='', color=CLOCK[k]['color'], markersize=6.5, label=f"{l} {CLOCK[k]['label'].lower()}") for k, l in (('E0', 'F'), ('FEC', 'E'), ('VC', 'L'))]
-handles.append(Line2D([], [], marker='o', linestyle='', color='white', markeredgecolor=INK2, markersize=4.5, label='altri seed'))
+handles.append(Line2D([], [], marker='o', linestyle='', color='white', markeredgecolor=INK2, markersize=4.5, label='altre ripetizioni'))
 fig.legend(handles=handles, loc='lower center', bbox_to_anchor=(0.5, -0.08), ncol=4, handletextpad=0.2, columnspacing=1.2)
 save(fig, 'cap4_risultati_clock')
 
@@ -89,7 +89,7 @@ for yi, (lab, v, col, mk, _) in zip(yy, rows):
     hollow = lab.startswith('+')
     a2.plot([80, v], [yi, yi], color=GRID, linewidth=2.5, solid_capstyle='round', zorder=1)
     a2.plot(v, yi, marker=mk, markersize=7, color='white' if hollow else col, markeredgecolor=col, markeredgewidth=1.3, zorder=3)
-    a2.text(v + 0.95, yi, r"$%s$" % num(v, 2), va='center', fontsize=7.5, color=INK)
+    a2.text(v + 0.95, yi, r"$%s$" % num(v, 1), va='center', fontsize=7.5, color=INK)
 a2.set_yticks(yy); a2.set_yticklabels([r[0] for r in rows], fontsize=7.5)
 a2.tick_params(axis='y', length=0); a2.grid(axis='y', visible=False)
 a2.set_xlim(80, 99); a2.xaxis.set_major_formatter(comma(0))

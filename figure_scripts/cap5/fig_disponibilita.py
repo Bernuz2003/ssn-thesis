@@ -2,8 +2,8 @@ import numpy as np
 from matplotlib.patches import Rectangle
 from common5 import *
 
-fig = plt.figure(figsize=(WIDTH, 3.2))
-gs = fig.add_gridspec(2, 1, height_ratios=[0.9, 1.25], hspace=0.62)
+fig = plt.figure(figsize=(WIDTH, 2.75))
+gs = fig.add_gridspec(2, 1, height_ratios=[0.9, 0.75], hspace=0.75)
 
 # (a) Schema: bande di DVS-Lip a due istanti della sequenza
 ax = fig.add_subplot(gs[0])
@@ -43,7 +43,7 @@ ax.set_title(r"\textbf{(a)} passi disponibili in ciascuna banda all'inizio e a r
 from matplotlib.colors import LinearSegmentedColormap
 ax2 = fig.add_subplot(gs[1])
 cmap = LinearSegmentedColormap.from_list('seq', ['#ffffff', '#cfe0f6', '#2a78d6', '#0d3d78'])
-M = np.zeros((4, 4)); E = np.zeros((4, 4)); names = []
+M = np.zeros((len(DS), 4)); E = np.zeros((len(DS), 4)); names = []
 for i, (d, C, name) in enumerate(DS):
     V = load(d, 'VC'); T = V['steps'].astype(int); tot = T.sum(); lo = 0
     for k, up in enumerate(DELAYS[d]):
@@ -52,7 +52,7 @@ for i, (d, C, name) in enumerate(DS):
         lo = up
     names.append(name)
 ax2.imshow(M * 100, cmap=cmap, vmin=0, vmax=100, aspect='auto')
-for i in range(4):
+for i in range(len(DS)):
     for k in range(4):
         dark = M[i, k] > 0.6
         ax2.text(k, i - 0.12, r"$%s\%%$" % num(M[i, k] * 100, 0), ha='center', va='center', fontsize=8.5,
@@ -60,7 +60,8 @@ for i in range(4):
         ax2.text(k, i + 0.27, r"vuota $%s\%%$" % num(E[i, k] * 100, 0), ha='center', va='center', fontsize=6.5,
                  color='#e8eef8' if dark else INK2)
 ax2.set_xticks(range(4)); ax2.set_xticklabels(["banda 1 (vicina)", "banda 2", "banda 3", "banda 4 (lontana)"], fontsize=7.5)
-ax2.set_yticks(range(4)); ax2.set_yticklabels(names, fontsize=7.5)
+ax2.set_yticks(range(len(DS))); ax2.set_yticklabels(names, fontsize=7.5)
+print('completa', np.round(M*100,1)); print('vuota', np.round(E*100,1))
 ax2.tick_params(length=0); ax2.grid(False)
 for sp in ax2.spines.values(): sp.set_visible(False)
 ax2.set_title(r"\textbf{(b)} passi con storia completa nella banda, validazione di sviluppo", loc='left')

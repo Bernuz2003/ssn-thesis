@@ -1,29 +1,370 @@
 \chapter{Riallocazione del budget nella baseline compatta}
 \label{chap:riallocazione_budget}
 
+% Fonti verificate il 2026-11-11 sul repository temporal-event-spiking-research:
+% notebooks/evoluzione_architetturale.ipynb e docs/EVOLUZIONE_DELLA_SPERIMENTAZIONE_v2.md;
+% summary.json dei run DVS-Lip E0 seed 42: E0_B_M__20260825_211710, E0_B_M--pyramidal__20260908_094118_261095,
+% E0_C0_M--f-temporal-capacity-d8__20260913_161320_867938 (4 ritardi, Token-QK), E0_C0_M__20260914_093427_434930,
+% varianti E0_B_M--{no-cross-time,readout-time-last-event,capacity-1m,capacity-2m},
+% profili comuni in artifacts/reports/architecture_evolution/<run>/hardware_profile_v4.json (64 campioni, FP32, CPU);
+% Sezioni 3.3-3.6: ripetizioni E0_{B,C0}_M seed 42-44 (DVS-Lip), E0_{B,C0}_M sui quattro dataset con le ripetizioni
+% disponibili del riferimento, varianti --capacity-{1m,2m}; necessità in artifacts/reports/necessity/<dataset>/,
+% sostituibilità E0_C0_M--ssa-local (Gesture, CIFAR10-DVS); E0_C0_M--f-tcap-stage1-dwc3-learnable-delays,
+% E0_D_M (gate di contenuto, solo patch_embed2) ed E0_D_M--static-control; profili hardware_profile_v4.json dei run.
+% codice: src/etsr/models/{layers,temporal,mini_qkformer,local_mixer,diagnostics}.py. Figure da figure_scripts/cap3.
+
+La baseline compatta dispone di circa mezzo milione di parametri, e con un budget così ridotto conta meno quanta capacità si aggiunge e molto di più dove la si colloca. Questo capitolo parte da una diagnosi della baseline, che mostra dove si concentrano le operazioni e che cosa limita le prestazioni, e procede con tre modifiche successive, ciascuna valutata cambiando un solo elemento. Il risultato è il modello di riferimento usato nei capitoli successivi, che su DVS-Lip guadagna undici punti di Macro-F1 con appena 320 parametri in più. Le sezioni finali ne verificano la solidità, esaminano il ruolo dell'attenzione nel secondo stadio e discutono due varianti in cui i ritardi diventano adattivi.
+
+In tutto il capitolo l'ingresso è la rappresentazione a finestra fissa della sezione~\ref{sec:input_baseline}, la ricetta è quella della sezione~\ref{sec:protocollo_addestramento} e le prestazioni sono misurate sulla validazione di sviluppo.
+
+
 % ==============================================================================
-%  CAPITOLO IN ATTESA DI RISULTATI (stato al 2026-11-04)
-%
-%  Le coorti storiche passano da TCAP con tre ritardi a DWC3 con quattro ritardi
-%  in un unico passo, mescolando due interventi. Prima della stesura si
-%  rieseguono, con ricetta, input (finestra fissa) e seed invariati:
-%    1. pyramidal embedding + TCAP con 4 ritardi [1,2,4,8] e Token-QK originale;
-%    2. lo stesso modello con DWC3 al posto della Token-QK (= C0).
-%  Così ogni passo da B a C0 modifica un solo elemento.
-%
-%  La configurazione C0 (pyramidal embedding + depthwise spatial mixer +
-%  CMLCM con ritardi [1,2,4,8]) resta invariata ed è usata come riferimento
-%  nei Capitoli 4 e 5.
+%  Diagnosi della baseline
 % ==============================================================================
 
-\noindent\textit{Questo capitolo sarà redatto al termine delle riesecuzioni che isolano i singoli interventi architetturali. La traccia seguente ne definisce i contenuti.}
+\section{Diagnosi della baseline}
+\label{sec:diagnosi_baseline}
 
-\begin{itemize}
-    \item \textbf{Diagnosi della baseline.} Distribuzione di operazioni e stato tra i blocchi, controlli di capacità a larghezza 192 e 256, rimozione della memoria tra passi e momento del readout.
-    \item \textbf{Pyramidal spiking patch embedding.} Ridistribuzione del budget nel primo patch embedding.
-    \item \textbf{Causal multi-lag channel mixer.} Formulazione, punto di inserimento e rimozione dei ritardi in inferenza come diagnostica di co-adattamento, con quattro ritardi fin dall'inizio.
-    \item \textbf{Depthwise spatial mixer.} Sostituzione della Q-K Token Attention a parità di ritardi, controllo con ritardi apprendibili.
-    \item \textbf{Stabilità e trasferimento.} Repliche con tre seed per la baseline e per la configurazione finale, confronto sui quattro dataset, controlli di larghezza.
-    \item \textbf{Ruolo dell'attenzione.} Test di necessità e di sostituibilità della SSA.
-    \item \textbf{Uso condizionale dei ritardi.} Variante con gate di contenuto, controllo statico riaddestrato e trasferimento tra dataset.
-\end{itemize}
+La prima domanda riguarda il costo. La figura~\ref{fig:diagnosi_baseline}a ripartisce tra i blocchi le operazioni potenziali della baseline su DVS-Lip, cioè quelle che la rete eseguirebbe se ogni possibile spike fosse presente. I due patch embedding ne concentrano oltre il $90\%$. Il primo, che lavora a piena risoluzione, raccoglie quasi nove decimi degli accumuli, e insieme al secondo totalizza tre quarti delle moltiplicazioni. Queste ultime nascono dove gli operandi non sono binari. Il primo strato riceve i conteggi degli eventi, il secondo patch embedding riceve il flusso residuo del primo stadio, che contiene piccoli interi (sezione~\ref{sec:architettura_baseline}), e ne eredita da solo metà delle MAC dell'intera rete. I due stadi con l'attenzione, che danno il nome all'architettura, contano per un quarto delle moltiplicazioni e per meno del $5\%$ degli accumuli. Lo stesso squilibrio, come si è visto nella figura~\ref{fig:architettura_baseline}c, riguarda lo stato persistente, dominato dal primo patch embedding.
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=\textwidth]{images/cap3/cap3_diagnosi.pdf}
+    \caption[Diagnosi della baseline su DVS-Lip]{Diagnosi della baseline su DVS-Lip. (a)~Ripartizione tra i blocchi delle moltiplicazioni con operando non binario (MAC) e degli accumuli potenziali per campione. (b)~Macro-F1 della baseline e di quattro varianti, ciascuna addestrata da zero con un solo cambiamento. Senza memoria tra i passi i neuroni non conservano lo stato da un passo al successivo. La variante con readout fino all'ultimo evento esclude dalla media i passi della coda vuota. Le due varianti più larghe portano a 192 e 256 i canali della rete, che conta così circa uno e due milioni di parametri. La linea tratteggiata indica la baseline.}
+    \label{fig:diagnosi_baseline}
+\end{figure}
+
+La seconda domanda riguarda la memoria. Se i neuroni non conservano il proprio stato da un passo al successivo, la rete può soltanto mediare le feature dei singoli passi, e la Macro-F1 crolla da $44{,}2$ a $13{,}0$ (figura~\ref{fig:diagnosi_baseline}b). Nella baseline, dunque, quasi tutta l'informazione temporale utile passa attraverso i potenziali di membrana, l'unico canale che collega un istante al successivo (sezione~\ref{sec:architettura_baseline}). Il momento in cui si legge la decisione conta molto meno. Escludere dalla media del readout i passi successivi all'ultimo evento costa circa due punti, un primo segnale del fatto che la rete fa uso anche della coda vuota, su cui torna il capitolo~\ref{chap:clock_input}.
+
+La terza domanda riguarda la capacità. Allargando la rete a 192 e a 256 canali, con circa uno e due milioni di parametri, la Macro-F1 sale a $49{,}4$ e a $51{,}8$. Quadruplicare il budget frutta meno di otto punti, e lo fa amplificando proprio i blocchi che già concentrano il costo. Le tre osservazioni indicano insieme una strategia diversa. Invece di aumentare la capacità conviene spostarla, togliendo risorse al frontend, che costa molto, e investendole in una memoria temporale più esplicita di quella offerta dai soli neuroni. La sezione successiva realizza questo spostamento un passo alla volta.
+
+
+% ==============================================================================
+%  Dalla baseline al modello di riferimento
+% ==============================================================================
+
+\section{Dalla baseline al modello di riferimento}
+\label{sec:percorso_riferimento}
+
+Il percorso si compone di tre modifiche, mostrate nella figura~\ref{fig:modello_riferimento}. Un frontend piramidale sostituisce il primo patch embedding, un mixer causale a più ritardi viene inserito in entrambi i patch embedding, e una convoluzione depthwise prende il posto della Q-K Token Attention nel primo stadio. Ogni passo modifica soltanto l'elemento indicato, a parità di ingresso e ricetta. Le tabelle che accompagnano ciascun passo riportano prestazioni e costi misurati sugli stessi campioni, mentre il testo si concentra sul significato dei risultati. I singoli passi sono stati addestrati una sola volta, e i due estremi del percorso sono stati ripetuti tre volte, come discusso nella sezione successiva.
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=\textwidth]{images/cap3/cap3_modello_riferimento.pdf}
+    \caption[Il modello di riferimento]{Il modello di riferimento. (a)~Sequenza dei blocchi per un ingresso di $128\times128$ pixel, con il bordo scuro sui blocchi modificati rispetto alla baseline e l'indicazione dei patch embedding che ospitano il mixer a ritardi. (b)~Il frontend piramidale, con il sottocampionamento anticipato e i canali che raddoppiano a ogni dimezzamento della risoluzione. (c)~Il mixer causale a più ritardi, che somma alla corrente presente di uno strato le trasformazioni lineari delle correnti di uno, due, quattro e otto passi prima.}
+    \label{fig:modello_riferimento}
+\end{figure}
+
+\subsection{Un frontend piramidale}
+\label{subsec:frontend_piramidale}
+
+La diagnosi indica con chiarezza da dove cominciare. Il primo patch embedding ospita l'$80\%$ dello stato e quasi nove decimi degli accumuli potenziali, e la ragione sta quasi interamente nel suo primo strato. Una convoluzione con 32 canali applicata alla risoluzione piena dell'ingresso produce, a ogni passo, più di mezzo milione di potenziali di membrana, quasi la metà di quelli dell'intera rete. Gli strati successivi riducono la risoluzione, ma partono comunque da una mappa così ampia, e tutto il modulo ne eredita il costo.
+
+Il frontend piramidale (figura~\ref{fig:modello_riferimento}b) ridisegna il modulo intorno a un principio semplice, dimezzare a ogni livello il numero dei neuroni. Il primo strato lavora ancora a $128\times128$ pixel, ma con 8 canali anziché 32. Gli strati successivi raddoppiano i canali, da 16 a 32 e infine a 64, e dimezzano a turno la risoluzione con un max-pooling $2\times2$ collocato dopo convoluzione e normalizzazione ma prima dei neuroni, che vivono così già sulla mappa ridotta. Ne risulta una piramide in cui ogni livello conta la metà dei potenziali del precedente, da circa 131 mila nel primo a 16 mila nell'ultimo. La shortcut resta, ma parte dalla seconda mappa e la porta alla risoluzione finale con una convoluzione $1\times1$ di passo 4. L'uscita ha le stesse dimensioni di quella originale, 64 canali su una griglia di $16\times16$ posizioni, e il resto della rete non cambia.
+
+\begin{table}[t]
+\centering
+\small
+\renewcommand{\arraystretch}{1.2}
+\caption[Effetto del frontend piramidale]{Effetto del frontend piramidale su DVS-Lip. I costi sono per campione e provengono da profili misurati sugli stessi 64 campioni. Gli accumuli sono potenziali, lo stato è espresso in migliaia di valori persistenti e la stima è quella aritmetica della sezione~\ref{sec:caratterizzazione_computazionale}.}
+\label{tab:frontend_piramidale}
+\begin{adjustbox}{max width=\textwidth}
+\begin{tabular}{@{}l r r r r r r@{}}
+\hline
+\textbf{Configurazione} & \textbf{Macro-F1} & \textbf{Parametri} & \textbf{MAC} & \textbf{Accumuli} & \textbf{Stato} & \textbf{Stima} \\
+ & [\%] & & [G] & [G] & [migliaia] & [mJ] \\
+\hline
+Baseline & $44{,}2$ & $500\,708$ & $1{,}53$ & $5{,}56$ & $1\,100$ & $7{,}32$ \\
+Frontend piramidale & $46{,}1$ & $431\,076$ & $1{,}25$ & $2{,}90$ & $477$ & $6{,}19$ \\
+\hline
+Variazione & $+2{,}0$ & $-13{,}9\%$ & $-18{,}5\%$ & $-47{,}7\%$ & $-56{,}6\%$ & $-15{,}4\%$ \\
+\hline
+\end{tabular}
+\end{adjustbox}
+\end{table}
+
+La tabella~\ref{tab:frontend_piramidale} mostra che cosa cambia. Lo stato si riduce di oltre la metà e gli accumuli potenziali quasi altrettanto, mentre moltiplicazioni e parametri scendono in misura più contenuta. Le moltiplicazioni nascono infatti soprattutto nel secondo patch embedding, che questo passo non tocca. Le prestazioni, che ci si sarebbe potuti attendere in calo, salgono anzi leggermente. Il guadagno è piccolo, ma basta a dire che la capacità rimossa non svolgeva un lavoro indispensabile.
+
+C'è però un rovescio, visibile nell'attività della rete. Il firing rate medio passa dal $6\%$ al $14\%$, come se la stessa informazione dovesse attraversare un numero minore di neuroni, ciascuno dei quali si attiva più spesso. Sul costo l'effetto è trascurabile, perché gli accumuli effettivamente eseguiti restano una frazione minima della stima energetica, ma per un'esecuzione che sfrutti la sparsità è un aspetto da tenere presente (sezione~\ref{sec:efficienza_neuromorfica_vincoli}). Il frutto principale di questo passo, in ogni caso, è il margine che lascia, circa settantamila parametri e oltre seicentomila potenziali di membrana, ed è da qui che parte il passo successivo.
+
+\subsection{Un mixer causale a più ritardi}
+\label{subsec:mixer_ritardi}
+
+Il margine liberato viene investito nella memoria. La diagnosi ha mostrato che quasi tutta l'informazione temporale della baseline passa per i potenziali di membrana, e la sezione~\ref{sec:dinamica_neuronale_memoria} ha descritto i limiti di questo canale. Con i parametri adottati un neurone dimezza il proprio potenziale a ogni passo, e su DVS-Lip un ingresso arrivato otto passi prima, cioè $400\,\mathrm{ms}$ prima, pesa meno di un duecentocinquantesimo di quello appena arrivato. Una parola dura in media circa un secondo. La memoria dei neuroni copre dunque una piccola parte dell'evento da riconoscere, e per di più lo riassume in un'unica somma.
+
+Il mixer causale a più ritardi (\emph{causal multi-lag channel mixer}, CMLCM) affianca a questo canale una via diretta verso il passato. Agisce sulla corrente $z_t$ che uno strato produce al passo $t$, prima che raggiunga i neuroni, e le somma le correnti dello stesso strato a quattro distanze precise, ciascuna trasformata da una propria matrice,
+\begin{equation}
+\label{eq:cmlcm}
+u_t=z_t+\sum_{k=1}^{4}W_k\,z_{t-d_k},
+\qquad
+(d_1,d_2,d_3,d_4)=(1,2,4,8).
+\end{equation}
+Ogni $W_k$ combina i canali tra loro, come una convoluzione $1\times1$ priva di bias, così che un'informazione registrata su un canale possa tornare nel presente anche su altri. All'inizio della sequenza il passato non ancora osservato vale zero. Le matrici, inoltre, partono da zero, e all'avvio dell'addestramento la rete coincide con quella senza mixer. Ogni contributo del passato viene quindi appreso, non imposto.
+
+Tre scelte di progetto meritano un commento. I ritardi crescono in progressione geometrica, e quattro soli termini coprono così otto passi ($400\,\mathrm{ms}$ per DVS-Lip) con una risoluzione fine per il passato recente e via via più grossolana per quello lontano. I ritardi sono poi fissi e uguali per tutti i canali, a differenza di quanto avviene in MD-Mixer (sezione~\ref{sec:strategie_modellazione_temporale}), una scelta che la sezione~\ref{sec:ritardi_adattivi} rimette in discussione. Il mixer, infine, è inserito in due soli punti, nell'ultimo strato del frontend piramidale e nella convoluzione con passo del secondo patch embedding, dove le mappe sono piccole, $16\times16$ e $8\times8$. Il buffer che conserva le correnti passate cresce con il numero delle posizioni, e collocarlo a risoluzione ridotta ne contiene il costo.
+
+\begin{table}[t]
+\centering
+\small
+\renewcommand{\arraystretch}{1.2}
+\caption[Effetto del mixer a ritardi]{Effetto del mixer a ritardi su DVS-Lip, aggiunto alla rete con frontend piramidale. Il mixer opera sulle correnti e lascia invariati gli accumuli, e lo stato comprende i buffer delle correnti passate. Grandezze e unità sono quelle della tabella~\ref{tab:frontend_piramidale}.}
+\label{tab:mixer_ritardi}
+\begin{adjustbox}{max width=\textwidth}
+\begin{tabular}{@{}l r r r r r r@{}}
+\hline
+\textbf{Configurazione} & \textbf{Macro-F1} & \textbf{Parametri} & \textbf{MAC} & \textbf{Accumuli} & \textbf{Stato} & \textbf{Stima} \\
+ & [\%] & & [G] & [G] & [migliaia] & [mJ] \\
+\hline
+Frontend piramidale & $46{,}1$ & $431\,076$ & $1{,}25$ & $2{,}90$ & $477$ & $6{,}19$ \\
++ mixer a ritardi & $53{,}9$ & $512\,996$ & $1{,}58$ & $2{,}90$ & $674$ & $7{,}53$ \\
+\hline
+Variazione & $+7{,}7$ & $+19{,}0\%$ & $+26{,}9\%$ & $0{,}0\%$ & $+41{,}2\%$ & $+21{,}5\%$ \\
+\hline
+\end{tabular}
+\end{adjustbox}
+\end{table}
+
+È il passo che pesa di più, con quasi otto punti di Macro-F1 (tabella~\ref{tab:mixer_ritardi}). Il prezzo è di circa ottantamila parametri per le quattro matrici, quattro quinti dei quali nel secondo patch embedding, dove i canali sono 128, e di circa duecentomila valori di stato per i buffer degli ultimi otto passi. Gli accumuli restano invariati, mentre le moltiplicazioni crescono di un quarto, perché le correnti non sono binarie e il mixer le combina con moltiplicazioni vere e proprie. Grazie al margine del passo precedente, però, i parametri superano quelli della baseline di meno del $3\%$, e lo stato ne resta poco più della metà.
+
+L'interpretazione del guadagno è coerente con quanto discusso nel capitolo~\ref{chap:fondamenti_stato_arte}. Il mixer non confronta passato e presente, li somma. Rende però disponibile al neurone, nel momento in cui decide, una versione del passato che la sola membrana avrebbe in gran parte già dimenticato, e lascia alla soglia e agli strati successivi il compito di metterla in relazione con il presente. È la differenza tra persistenza e accesso della sezione~\ref{subsec:memoria_relazioni}, e il capitolo~\ref{chap:memoria_relazionale} riparte proprio da qui, chiedendosi se il confronto possa diventare esplicito.
+
+Il guadagno, infine, non si spiega con i soli parametri aggiunti. I controlli di capacità della sezione~\ref{sec:solidita_riferimento} mostrano che una baseline con un numero di parametri quattro volte maggiore resta al di sotto del modello di riferimento.
+
+\subsection{Dall'attenzione Q-K alla convoluzione depthwise}
+\label{subsec:depthwise}
+
+Con il frontend alleggerito e la memoria rafforzata, resta da riconsiderare il primo stadio. La sezione~\ref{sec:qkformer_riferimento} ha mostrato che la Q-K Token Attention seleziona i token in base all'attività della loro Query, senza mettere in relazione token diversi. Nel primo stadio i token sono 256, su una griglia di $16\times16$, e ciascuno descrive una porzione di circa $8\times8$ pixel dell'ingresso. In un dataset come DVS-Lip il segnale sta nella forma della bocca, cioè nei rapporti tra porzioni vicine dell'immagine, e un'operazione che decide token per token, senza guardare i vicini, ne coglie soltanto una parte.
+
+L'ultimo passo sostituisce quindi l'attenzione con una convoluzione depthwise $3\times3$, seguita da normalizzazione e neurone. A differenza di una convoluzione ordinaria, che combina tutti i canali, una convoluzione depthwise filtra ciascun canale separatamente, con un nucleo di nove pesi che mette in relazione ogni posizione con le otto adiacenti. È un mixing spaziale puramente locale, complementare allo spiking MLP del blocco, che mescola i canali in ogni posizione senza guardare le vicine. Le tre proiezioni dell'attenzione costavano circa dodicimila parametri, la convoluzione depthwise ne richiede meno di settecento. Collegamento residuo, MLP, ritardi del mixer e self-attention del secondo stadio restano invariati, e la rete conserva così un operatore globale nello stadio in cui i token sono pochi.
+
+\begin{table}[t]
+\centering
+\small
+\renewcommand{\arraystretch}{1.2}
+\caption[Effetto della convoluzione depthwise]{Effetto della convoluzione depthwise nel primo stadio su DVS-Lip, con frontend piramidale e mixer a ritardi. La seconda riga è il modello di riferimento. Grandezze e unità sono quelle della tabella~\ref{tab:frontend_piramidale}.}
+\label{tab:depthwise}
+\begin{adjustbox}{max width=\textwidth}
+\begin{tabular}{@{}l r r r r r r@{}}
+\hline
+\textbf{Primo stadio} & \textbf{Macro-F1} & \textbf{Parametri} & \textbf{MAC} & \textbf{Accumuli} & \textbf{Stato} & \textbf{Stima} \\
+ & [\%] & & [G] & [G] & [migliaia] & [mJ] \\
+\hline
+Q-K Token Attention & $53{,}9$ & $512\,996$ & $1{,}58$ & $2{,}90$ & $674$ & $7{,}53$ \\
+convoluzione depthwise & $55{,}2$ & $501\,028$ & $1{,}51$ & $2{,}86$ & $639$ & $7{,}16$ \\
+\hline
+Variazione & $+1{,}3$ & $-2{,}3\%$ & $-4{,}9\%$ & $-1{,}4\%$ & $-5{,}2\%$ & $-4{,}8\%$ \\
+\hline
+\end{tabular}
+\end{adjustbox}
+\end{table}
+
+La tabella~\ref{tab:depthwise} mostra che la sostituzione conviene sotto ogni aspetto. Riduce parametri, moltiplicazioni e stato, e migliora la Macro-F1 di oltre un punto. È un guadagno piccolo in assoluto, ma ogni grandezza si muove nella direzione di una rete al tempo stesso più leggera e più accurata. Nel regime compatto un'operazione locale e quasi gratuita rende più di un'attenzione che seleziona i token senza metterli in relazione. Resta aperta una domanda più ampia, se la stessa logica valga anche per la self-attention del secondo stadio, che è globale per costruzione. La sezione~\ref{sec:ssa_secondo_stadio} la affronta con due test complementari.
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=\textwidth]{images/cap3/cap3_percorso.pdf}
+    \caption[Dalla baseline al modello di riferimento su DVS-Lip]{Dalla baseline al modello di riferimento su DVS-Lip. Ogni passo aggiunge una modifica a quelli precedenti. (a)~Macro-F1 sulla validazione di sviluppo, con il guadagno di ciascun passo alla base delle barre. (b)~Costi per campione rispetto alla baseline. Le MAC comprendono quelle del mixer a ritardi, gli accumuli sono potenziali e la stima energetica è quella aritmetica della sezione~\ref{sec:caratterizzazione_computazionale}. Parametri, MAC e stima energetica, quasi sovrapposti, tornano alla fine sui valori della baseline, mentre stato e accumuli si riducono di circa la metà.}
+    \label{fig:percorso_riferimento}
+\end{figure}
+
+\paragraph{Bilancio del percorso}
+La figura~\ref{fig:percorso_riferimento} riassume il percorso nel suo insieme. Il modello di riferimento guadagna undici punti di Macro-F1 rispetto alla baseline, con 320 parametri in più, quasi la metà degli accumuli potenziali e il $42\%$ di stato in meno. Le moltiplicazioni e la stima energetica restano invece quasi invariate, e il motivo è istruttivo. Nella baseline le MAC rappresentano il $96\%$ della stima, e nascono dagli operandi interi, i conteggi in ingresso e le somme residue, che il percorso non elimina. Il risparmio si concentra così sugli accumuli e sullo stato, due voci che la stima aritmetica pesa poco ma che, come discusso nella sezione~\ref{sec:efficienza_neuromorfica_vincoli}, contano molto in una realizzazione hardware. In sintesi, il budget non è stato aumentato ma spostato, dalla risoluzione del frontend alla memoria temporale e dall'attenzione del primo stadio a un mixing locale, e lo spostamento è valso più di quanto avrebbe reso quadruplicarlo.
+
+
+% ==============================================================================
+%  Solidità del risultato
+% ==============================================================================
+
+\section{Solidità del risultato}
+\label{sec:solidita_riferimento}
+
+Il percorso della sezione precedente poggia su un solo dataset e su un solo addestramento per passo. Prima di adottare il modello di riferimento conviene quindi sottoporne il vantaggio a tre verifiche, ripetendo l'addestramento, cambiando dataset e confrontandolo con versioni più grandi della baseline.
+
+\paragraph{Ripetizioni}
+Su DVS-Lip baseline e modello di riferimento sono stati addestrati tre volte, con inizializzazioni diverse. La baseline raggiunge una Macro-F1 di $43{,}9\pm0{,}4$, il modello di riferimento di $55{,}5\pm0{,}9$, in media e deviazione standard. La variabilità dovuta all'addestramento resta sotto il punto, mentre la distanza tra i due modelli supera gli undici, e la migliore ripetizione della baseline resta oltre dieci punti sotto la peggiore del modello di riferimento. Lo stesso confronto aiuta però a leggere i singoli passi del percorso. Il frontend piramidale e soprattutto il mixer a ritardi producono guadagni superiori a questa variabilità. Il punto guadagnato con la convoluzione depthwise ne è invece dello stesso ordine, e va considerato un'indicazione, sostenuta dalla riduzione concorde di tutti i costi, più che un miglioramento accertato.
+
+\paragraph{Quattro dataset}
+La figura~\ref{fig:solidita_riferimento}a estende il confronto agli altri tre dataset. Il modello di riferimento migliora la baseline su tutti e quattro, con guadagni compresi tra sei e quindici punti, e le ripetizioni disponibili non cambiano il quadro. Il guadagno è più contenuto dove la baseline è già alta, come su DVS128 Gesture, il cui limite principale, come mostrerà il capitolo~\ref{chap:clock_input}, sta nella rappresentazione dell'ingresso più che nella rete. È invece massimo su THU-EACT-50-CHL, dove la baseline parte più in basso. Anche su CIFAR10-DVS, dove ci si poteva attendere che la memoria temporale contasse meno (sezione~\ref{sec:dataset}), il vantaggio supera i nove punti. Le modifiche, scelte guardando soltanto DVS-Lip, non sono quindi legate a quel dataset.
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=\textwidth]{images/cap3/cap3_solidita.pdf}
+    \caption[Solidità del modello di riferimento]{Solidità del modello di riferimento, sulla validazione di sviluppo. (a)~Baseline compatta e modello di riferimento sui quattro dataset, con il guadagno indicato sopra ogni coppia. Le barre corrispondono a un addestramento per modello, i punti alle ripetizioni con inizializzazioni diverse, disponibili su DVS-Lip per entrambi i modelli e sugli altri dataset per il solo modello di riferimento. (b)~Macro-F1 su DVS-Lip in funzione dei parametri, per reti con 128, 192 e 256 canali. La linea tratteggiata indica il modello di riferimento nella versione compatta.}
+    \label{fig:solidita_riferimento}
+\end{figure}
+
+\paragraph{Capacità}
+La diagnosi aveva mostrato che allargare la baseline rende poco. La figura~\ref{fig:solidita_riferimento}b mette a confronto le due architetture alle stesse tre larghezze, 128, 192 e 256 canali, cioè circa mezzo, uno e due milioni di parametri. Le due curve salgono con pendenze simili e restano separate da circa dieci punti a ogni larghezza, e la baseline più grande resta oltre tre punti sotto il modello di riferimento più piccolo. Il vantaggio, dunque, non è un effetto del regime compatto in cui è stato trovato ma viene dalla struttura della rete, e si conserva quando la capacità cresce.
+
+\begin{table}[t]
+\centering
+\small
+\renewcommand{\arraystretch}{1.2}
+\caption[Struttura e capacità a confronto su DVS-Lip]{Struttura e capacità a confronto su DVS-Lip, per la baseline compatta e il modello di riferimento con 128 e con 256 canali. Grandezze e unità sono quelle della tabella~\ref{tab:frontend_piramidale}.}
+\label{tab:capacita_lip}
+\begin{adjustbox}{max width=\textwidth}
+\begin{tabular}{@{}l r r r r r r@{}}
+\hline
+\textbf{Modello} & \textbf{Macro-F1} & \textbf{Parametri} & \textbf{MAC} & \textbf{Accumuli} & \textbf{Stato} & \textbf{Stima} \\
+ & [\%] & & [G] & [G] & [migliaia] & [mJ] \\
+\hline
+Baseline, 128 canali & $44{,}2$ & $500\,708$ & $1{,}53$ & $5{,}56$ & $1\,100$ & $7{,}32$ \\
+Baseline, 256 canali & $51{,}8$ & $1\,967\,972$ & $5{,}37$ & $22{,}23$ & $2\,198$ & $25{,}68$ \\
+\hline
+Riferimento, 128 canali & $55{,}2$ & $501\,028$ & $1{,}51$ & $2{,}86$ & $639$ & $7{,}16$ \\
+Riferimento, 256 canali & $61{,}6$ & $1\,969\,892$ & $5{,}82$ & $11{,}45$ & $1\,278$ & $27{,}60$ \\
+\hline
+\end{tabular}
+\end{adjustbox}
+\end{table}
+
+La tabella~\ref{tab:capacita_lip} mostra quanto costerebbe inseguire il modello di riferimento con la sola capacità, senza raggiungerlo. Con un quarto dei parametri, il modello compatto esegue poco più di un quarto delle moltiplicazioni della baseline più grande, circa un ottavo dei suoi accumuli potenziali, e conserva meno di un terzo del suo stato. Allargato anch'esso a 256 canali, il modello di riferimento esegue invece qualche moltiplicazione in più della baseline di pari larghezza, perché le matrici del mixer crescono con il quadrato del numero di canali, mentre il risparmio del frontend piramidale cresce soltanto in proporzione. Nel regime compatto i due effetti si compensano.
+
+\begin{table}[t]
+\centering
+\small
+\renewcommand{\arraystretch}{1.2}
+\caption[Capacità del modello di riferimento sui quattro dataset]{Macro-F1 del modello di riferimento al crescere della larghezza, sui quattro dataset. Il numero dei parametri varia leggermente da un dataset all'altro con le dimensioni della testa.}
+\label{tab:capacita_dataset}
+\begin{tabular}{@{}l r r r@{}}
+\hline
+\textbf{Dataset} & \textbf{128 canali} & \textbf{192 canali} & \textbf{256 canali} \\
+ & {\footnotesize($0{,}5$ milioni)} & {\footnotesize($1{,}1$ milioni)} & {\footnotesize($2{,}0$ milioni)} \\
+\hline
+DVS-Lip & $55{,}2$ & $59{,}8$ & $61{,}6$ \\
+DVS128 Gesture & $86{,}5$ & $83{,}6$ & $85{,}5$ \\
+CIFAR10-DVS & $67{,}8$ & $68{,}4$ & $70{,}3$ \\
+THU-EACT-50-CHL & $45{,}6$ & $57{,}8$ & $63{,}0$ \\
+\hline
+\end{tabular}
+\end{table}
+
+Ripetuta sugli altri dataset per il solo modello di riferimento (tabella~\ref{tab:capacita_dataset}), la stessa prova mostra che il bisogno di capacità cambia molto da un dataset all'altro. THU-EACT-50-CHL guadagna oltre diciassette punti passando da mezzo a due milioni di parametri, DVS-Lip sei, CIFAR10-DVS due e mezzo, mentre su DVS128 Gesture le versioni più larghe non migliorano quella compatta. Il mezzo milione di parametri è quindi un vincolo stringente per THU-EACT-50-CHL e quasi irrilevante per DVS128 Gesture. I capitoli successivi mantengono comunque la dimensione compatta, che è l'oggetto di questo lavoro, tenendo presente che su THU-EACT-50-CHL i valori assoluti risentono in misura rilevante del budget.
+
+
+% ==============================================================================
+%  La self-attention del secondo stadio
+% ==============================================================================
+
+\section{La self-attention del secondo stadio}
+\label{sec:ssa_secondo_stadio}
+
+Dopo la sostituzione della Q-K Token Attention, la SSA del secondo stadio è l'unico operatore della rete che mette in relazione posizioni lontane. Il secondo stadio lavora su una griglia di $8\times8$ token, ciascuno dei quali descrive una porzione di $16\times16$ pixel dell'ingresso, e viene naturale chiedersi se anche qui, come nel primo stadio, un'operazione locale possa bastare. La domanda ha due versioni, che la sezione~\ref{sec:disegno_controlli} ha distinto. La prima riguarda il modello addestrato, e chiede quanto la sua decisione dipenda dalla SSA. La seconda riguarda l'architettura, e chiede se possa farne a meno.
+
+\paragraph{Test di necessità}
+Il test di necessità disattiva la SSA sul checkpoint del modello di riferimento, soltanto in inferenza. Il blocco del secondo stadio salta il ramo dell'attenzione, così che il flusso residuo raggiunge direttamente l'MLP, e tutti i pesi restano invariati. La tabella~\ref{tab:ssa_secondo_stadio} riporta il risultato, un collasso completo su tutti e tre i dataset esaminati. L'accuratezza scende all'$1{,}9\%$ su DVS-Lip, al $9{,}8\%$ su DVS128 Gesture e al $13{,}2\%$ su CIFAR10-DVS, valori prossimi a quelli di una risposta casuale, e su questi ultimi due dataset circa nove campioni su dieci vengono assegnati alla stessa classe. La decisione del modello addestrato passa dunque interamente per la SSA.
+
+\paragraph{Test di sostituibilità}
+Il test di sostituibilità pone la domanda opposta. La SSA viene sostituita da un mixer spaziale locale e il modello viene addestrato da zero. Il mixer applica in sequenza una convoluzione depthwise $3\times3$, un'espansione $1\times1$ che raddoppia i canali e una proiezione $1\times1$ che li riporta al valore originale, ciascuna seguita da normalizzazione e neuroni. Ha quasi gli stessi parametri della SSA, appena $1\,152$ in più, ma nessuna relazione tra posizioni lontane. Su DVS128 Gesture il modello così ottenuto supera di un punto quello con la SSA, su CIFAR10-DVS lo eguaglia, e in entrambi i casi esegue circa l'$8\%$ di moltiplicazioni in meno. Nella SSA, infatti, le proiezioni di Query, Key e Value leggono il flusso residuo, che non è binario, mentre nel mixer locale lo legge soltanto la convoluzione depthwise, che ha pochi pesi.
+
+\begin{table}[t]
+\centering
+\small
+\renewcommand{\arraystretch}{1.2}
+\caption[Necessità e sostituibilità della SSA nel secondo stadio]{Necessità e sostituibilità della SSA nel secondo stadio. Macro-F1 [\%] del modello di riferimento, dello stesso checkpoint con la SSA disattivata in inferenza, e del modello addestrato da zero con un mixer spaziale locale al posto della SSA. Il test di sostituibilità non è stato eseguito su DVS-Lip.}
+\label{tab:ssa_secondo_stadio}
+\begin{tabular}{@{}l r r r@{}}
+\hline
+\textbf{Dataset} & \textbf{Riferimento} & \textbf{SSA disattivata} & \textbf{Mixer locale} \\
+ & & {\footnotesize(stesso checkpoint)} & {\footnotesize(addestrato da zero)} \\
+\hline
+DVS-Lip & $55{,}2$ & $0{,}3$ & -- \\
+DVS128 Gesture & $86{,}5$ & $3{,}6$ & $87{,}6$ \\
+CIFAR10-DVS & $67{,}8$ & $7{,}1$ & $67{,}8$ \\
+\hline
+\end{tabular}
+\end{table}
+
+Letti insieme, i due test raccontano una storia coerente ma non ovvia. Il collasso sul checkpoint non dimostra che la SSA sia necessaria. Mostra che la rete, addestrata con la SSA, ha costruito intorno a essa la propria soluzione, al punto che l'MLP che la segue non sa più interpretare un flusso residuo privo del suo contributo. Addestrata senza SSA, la stessa architettura trova un'altra soluzione, altrettanto buona, con un operatore che guarda soltanto le posizioni vicine. Un intervento sul checkpoint misura quindi la dipendenza della soluzione appresa da un componente, e soltanto un'ablazione riaddestrata può dire se il componente serva. È la regola con cui la tesi legge tutti gli interventi di questo tipo, come quelli della sezione~\ref{sec:uso_memoria}.
+
+Sul piano architetturale, il risultato indica che nel secondo stadio di una rete così piccola la relazione globale tra i token non porta un vantaggio misurabile, almeno su questi due dataset. È plausibile che vi contribuisca la dimensione ridotta della griglia, che pochi strati locali coprono quasi per intero, e il readout, che media comunque su tutte le posizioni. Il modello di riferimento conserva tuttavia la SSA. La sostituzione è stata verificata su due soli dataset e non autorizza a generalizzare agli altri due, e la SSA mantiene la rete nella famiglia degli spiking Transformer da cui la baseline deriva, rendendo diretto il confronto con i modelli discussi nel capitolo~\ref{chap:fondamenti_stato_arte}. Il mixer locale resta un'alternativa documentata, più economica e altrettanto accurata sui dataset provati, da considerare quando il costo diventa il criterio principale.
+
+
+% ==============================================================================
+%  Ritardi adattivi
+% ==============================================================================
+
+\section{Ritardi adattivi}
+\label{sec:ritardi_adattivi}
+
+Nel mixer del modello di riferimento i ritardi sono fissati prima dell'addestramento, uguali per tutti i canali e per tutti i campioni. Esistono due modi naturali di renderli adattivi. Il primo lascia all'addestramento la scelta del ritardo di ciascun canale, che resta poi fisso in inferenza, come in MD-Mixer (sezione~\ref{sec:strategie_modellazione_temporale}). Il secondo conserva i ritardi, ma rende il peso di ciascuno variabile da un campione all'altro e da un istante all'altro. La tabella~\ref{tab:ritardi_adattivi} riassume entrambe le varianti.
+
+\paragraph{Ritardi appresi}
+Nella prima variante ogni ramo del mixer ha, per ciascun canale in ingresso, un proprio ritardo continuo, inizializzato al valore fisso e vincolato tra uno e otto passi. Poiché uno spostamento discreto non è derivabile, durante l'addestramento la corrente ritardata è una media dei passi interi vicini, pesata da un nucleo triangolare la cui ampiezza si riduce da quattro passi a mezzo passo, fino a selezionarne uno solo. È la stessa strategia adottata da MD-Mixer. In inferenza ogni ritardo viene arrotondato all'intero più vicino. La variante aggiunge 768 parametri e non cambia lo stato, perché il buffer conserva comunque gli ultimi otto passi.
+
+Su DVS-Lip la variante non migliora il mixer a ritardi fissi, e la piccola differenza rientra nella variabilità tra ripetizioni. I ritardi appresi spiegano il perché. Nel primo patch embedding quasi tutti i canali conservano il ritardo iniziale. Nel secondo si spostano in misura apprezzabile soltanto i due rami intermedi, e sempre di un passo verso il passato, da due a tre passi per poco meno della metà dei canali e da quattro a cinque per circa tre quarti. La griglia geometrica è dunque già vicina a quella che la rete sceglierebbe da sé. Il risultato differisce da quello riportato per MD-Mixer, in cui i ritardi appresi valgono circa due punti in più di quelli fissi~\cite{shi2026multidelay}, e una spiegazione plausibile sta nella diversa struttura dei due mixer. In MD-Mixer ogni canale combina pochi istanti della propria storia con coefficienti scalari, e scegliere i ritardi è l'unico modo di raggiungere il passato utile. Nel mixer del modello di riferimento ogni ritardo porta con sé una matrice completa tra i canali, e quattro ritardi in progressione geometrica offrono già abbastanza punti di accesso perché le matrici ne ricavino ciò che serve.
+
+\paragraph{Gate di contenuto}
+La seconda variante moltiplica il contributo di ciascun ritardo per un gate che dipende dalla corrente presente,
+\begin{equation}
+\label{eq:cmlcm_gate}
+u_t=z_t+\sum_{k=1}^{4}g_{k,t}\,W_k\,z_{t-d_k},
+\qquad
+g_{k,t}=4\,a_t\,\pi_{k,t}.
+\end{equation}
+In ogni posizione una piccola rete, formata da due convoluzioni $1\times1$, legge $z_t$ e ne ricava due grandezze. L'ampiezza $a_t$, compresa tra zero e due, stabilisce quanto passato far entrare nel complesso, e la distribuzione $\pi_{k,t}$ sui quattro ritardi stabilisce come ripartirlo. L'ultimo strato della piccola rete parte da zero, così che all'inizio ogni gate vale uno e il mixer coincide con quello a ritardi fissi. La variante è applicata al solo mixer del secondo patch embedding e aggiunge circa $8\,600$ parametri, oltre a una sigmoide e a una softmax da calcolare in ogni posizione e a ogni passo. Per distinguere l'effetto del contenuto da quello di una semplice ripesatura dei ritardi, un controllo usa la stessa forma con gate costanti, appresi ma indipendenti dall'ingresso, al prezzo di cinque soli parametri.
+
+\begin{table}[t]
+\centering
+\small
+\renewcommand{\arraystretch}{1.2}
+\caption[Ritardi adattivi]{Ritardi adattivi nel mixer del modello di riferimento. Macro-F1 [\%] sulla validazione di sviluppo e parametri aggiunti rispetto al mixer a ritardi fissi. Ritardi appresi e gate costanti sono stati provati soltanto su DVS-Lip.}
+\label{tab:ritardi_adattivi}
+\begin{adjustbox}{max width=\textwidth}
+\begin{tabular}{@{}l r r r r r@{}}
+\hline
+\textbf{Mixer} & \textbf{Parametri} & \textbf{DVS-Lip} & \textbf{DVS128} & \textbf{CIFAR10-} & \textbf{THU-EACT-} \\
+ & \textbf{aggiunti} & & \textbf{Gesture} & \textbf{DVS} & \textbf{50-CHL} \\
+\hline
+Ritardi fissi (riferimento) & -- & $55{,}2$ & $86{,}5$ & $67{,}8$ & $45{,}6$ \\
+Ritardi appresi & $768$ & $54{,}6$ & -- & -- & -- \\
+Gate costanti & $5$ & $55{,}5$ & -- & -- & -- \\
+Gate di contenuto & $8\,581$ & $58{,}3$ & $84{,}1$ & $67{,}8$ & $50{,}2$ \\
+\hline
+\end{tabular}
+\end{adjustbox}
+\end{table}
+
+Su DVS-Lip i gate costanti lasciano la Macro-F1 al livello del modello di riferimento, mentre i gate di contenuto la alzano di circa tre punti. Il vantaggio viene quindi dalla possibilità di decidere, posizione per posizione e istante per istante, quanto passato usare, non da una ripartizione fissa migliore tra i ritardi. Sugli altri dataset, però, il quadro cambia. Il guadagno si ripete su THU-EACT-50-CHL, dove tuttavia le due ripetizioni del modello di riferimento differiscono già di tre punti, è nullo su CIFAR10-DVS e diventa una perdita su DVS128 Gesture. L'assenza di effetto su CIFAR10-DVS è coerente con la natura del dataset, in cui la struttura temporale riflette soprattutto il movimento imposto all'immagine e lascia poco da modulare. Resta da capire perché il gate penalizzi DVS128 Gesture, e un solo addestramento per dataset non basta a stabilirlo.
+
+Per queste ragioni la variante condizionale non entra nel modello di riferimento. Il suo guadagno non si trasferisce in modo uniforme, è stato misurato una sola volta per dataset, e aggiunge al percorso del passato funzioni non lineari da calcolare a ogni passo, che il mixer a ritardi fissi non richiede. Il capitolo~\ref{chap:memoria_relazionale} la riprende come termine di confronto, quando la rappresentazione dell'ingresso sarà cambiata.
+
+
+% ==============================================================================
+%  Il modello di riferimento
+% ==============================================================================
+
+\section{Il modello di riferimento}
+\label{sec:modello_riferimento}
+
+Il modello di riferimento è dunque la baseline compatta con tre modifiche, un frontend piramidale, un mixer causale a più ritardi nei due patch embedding e una convoluzione depthwise al posto della Q-K Token Attention del primo stadio. La SSA del secondo stadio, il readout e la ricetta di addestramento restano quelli della baseline. La figura~\ref{fig:modello_riferimento} ne mostra lo schema, e la tabella~\ref{tab:riferimento_sintesi} ne raccoglie le caratteristiche su DVS-Lip accanto a quelle della baseline.
+
+\begin{table}[t]
+\centering
+\small
+\renewcommand{\arraystretch}{1.2}
+\caption[Baseline compatta e modello di riferimento]{Baseline compatta e modello di riferimento su DVS-Lip. La Macro-F1 è la media di tre addestramenti, con la deviazione standard. I costi sono per campione, misurati sugli stessi 64 campioni della validazione di sviluppo, e le operazioni dell'attenzione sono contate nelle SOP come se ogni spike fosse presente. Secondo stadio con SSA, readout e ricetta sono comuni ai due modelli.}
+\label{tab:riferimento_sintesi}
+\begin{tabularx}{\textwidth}{@{}l >{\raggedright\arraybackslash}X >{\raggedright\arraybackslash}X@{}}
+\hline
+ & \textbf{Baseline compatta} & \textbf{Modello di riferimento} \\
+\hline
+Primo patch embedding & 32 canali a piena risoluzione & piramidale, da 8 a 64 canali \\
+Mixer a ritardi & assente & ritardi 1, 2, 4, 8 nei due patch embedding \\
+Primo stadio & Q-K Token Attention & convoluzione depthwise $3\times3$ \\
+\hline
+Macro-F1 [\%] & $43{,}9\pm0{,}4$ & $55{,}5\pm0{,}9$ \\
+Parametri & $500\,708$ & $501\,028$ \\
+Stato persistente [migliaia] & $1\,100$ & $639$ \\
+MAC [G] & $1{,}53$ & $1{,}51$ \\
+Accumuli potenziali [G] & $5{,}56$ & $2{,}86$ \\
+SOP [G] & $0{,}30$ & $0{,}26$ \\
+Firing rate [\%] & $5{,}9$ & $9{,}3$ \\
+Stima energetica [mJ] & $7{,}32$ & $7{,}16$ \\
+\hline
+\end{tabularx}
+\end{table}
+
+Il bilancio dei costi è quello già discusso alla fine della sezione~\ref{sec:percorso_riferimento}, e la tabella aggiunge un solo elemento. Il firing rate sale dal $6\%$ al $9\%$, ma le operazioni sinaptiche effettivamente eseguite diminuiscono comunque, perché i neuroni che le innescano sono molto meno numerosi. Le verifiche di questo capitolo mostrano che il vantaggio resiste a nuovi addestramenti, si ripete su tutti e quattro i dataset e non si raggiunge quadruplicando la capacità della baseline.
+
+Il modello lascia però aperte alcune questioni, che orientano il seguito della tesi. I ritardi del mixer, come la costante di tempo dei neuroni, sono espressi in passi, e il loro significato fisico dipende interamente da come l'ingresso viene suddiviso nel tempo. La diagnosi, inoltre, ha mostrato che la rete fa uso della coda vuota che la finestra fissa lascia dopo l'ultimo evento. Il capitolo~\ref{chap:clock_input} tiene ferma l'architettura e cambia proprio il clock dell'input. Il mixer, infine, somma passato e presente senza confrontarli, e il capitolo~\ref{chap:memoria_relazionale} si chiede se un confronto esplicito possa rendere di più.

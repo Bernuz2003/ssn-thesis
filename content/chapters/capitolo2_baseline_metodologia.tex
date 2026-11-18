@@ -123,7 +123,7 @@ La baseline compatta è un'implementazione scritta per questo lavoro, che conser
 \begin{figure}[t]
     \centering
     \includegraphics[width=\textwidth]{images/cap2/cap2_architettura.pdf}
-    \caption[Architettura della baseline compatta]{Architettura della baseline compatta per un ingresso di $128\times128$ pixel. (a)~Sequenza dei blocchi, con le dimensioni di uscita di ciascuno per ogni passo, nella forma canali $\times$ altezza $\times$ larghezza. (b)~Il primo patch embedding, l'unico modulo che lavora a piena risoluzione, con il ramo principale di quattro convoluzioni e la scorciatoia che parte dalla prima mappa di feature. (c)~Ripartizione dei parametri e dello stato persistente tra i blocchi su DVS-Lip, secondo la tabella~\ref{tab:architettura_baseline}. I colori dei blocchi corrispondono a quelli del pannello (a).}
+    \caption[Architettura della baseline compatta]{Architettura della baseline compatta per un ingresso di $128\times128$ pixel. (a)~Sequenza dei blocchi, con le dimensioni di uscita di ciascuno per ogni passo, nella forma canali $\times$ altezza $\times$ larghezza. (b)~Il primo patch embedding, l'unico modulo che lavora a piena risoluzione, con il ramo principale di quattro convoluzioni e la shortcut che parte dalla prima mappa di feature. (c)~Ripartizione dei parametri e dello stato persistente tra i blocchi su DVS-Lip, secondo la tabella~\ref{tab:architettura_baseline}. I colori dei blocchi corrispondono a quelli del pannello (a).}
     \label{fig:architettura_baseline}
 \end{figure}
 
@@ -138,12 +138,12 @@ Convoluzioni, normalizzazioni e proiezioni lineari vengono applicate a ogni pass
 
 \paragraph{Primo patch embedding}
 \label{subsec:primo_embedding}
-Il primo patch embedding traduce i conteggi in spike e riduce la risoluzione di un fattore otto (figura~\ref{fig:architettura_baseline}b). Il ramo principale è una cascata di quattro convoluzioni $3\times3$, ciascuna seguita da batch normalization e da un neurone LIF. La prima porta i canali da 2 a 32 a piena risoluzione, le altre tre dimezzano a turno la risoluzione e portano i canali a 64. In parallelo, una scorciatoia preleva le feature del primo strato e le porta direttamente alla risoluzione finale con una convoluzione $1\times1$ di passo 8. Le due uscite, entrambe spiking, vengono sommate,
+Il primo patch embedding traduce i conteggi in spike e riduce la risoluzione di un fattore otto (figura~\ref{fig:architettura_baseline}b). Il ramo principale è una cascata di quattro convoluzioni $3\times3$, ciascuna seguita da batch normalization e da un neurone LIF. La prima porta i canali da 2 a 32 a piena risoluzione, le altre tre dimezzano a turno la risoluzione e portano i canali a 64. In parallelo, una shortcut preleva le feature del primo strato e le porta direttamente alla risoluzione finale con una convoluzione $1\times1$ di passo 8. Le due uscite, entrambe spiking, vengono sommate,
 \begin{equation}
 \label{eq:primo_embedding}
 E^{(1)}_k=M^{(1)}_k+R^{(1)}_k\in\{0,1,2\}^{64\times\frac H8\times\frac W8},
 \end{equation}
-dove $M^{(1)}_k$ e $R^{(1)}_k$ sono gli spike emessi al passo $k$ dal ramo principale e dalla scorciatoia. È il principio della scorciatoia deformata di SPEDS (equazione~\eqref{eq:speds_formulazione}), con due differenze. Il sottocampionamento avviene con convoluzioni a passo 2 anziché con max-pooling, e la scorciatoia attraversa l'intero cambio di scala in un solo salto. È anche l'unico modulo della rete che opera a piena risoluzione, e il suo peso sul bilancio complessivo emerge più avanti.
+dove $M^{(1)}_k$ e $R^{(1)}_k$ sono gli spike emessi al passo $k$ dal ramo principale e dalla shortcut. È il principio della shortcut deformata di SPEDS (equazione~\eqref{eq:speds_formulazione}), con due differenze. Il sottocampionamento avviene con convoluzioni a passo 2 anziché con max-pooling, e la shortcut attraversa l'intero cambio di scala in un solo salto. È anche l'unico modulo della rete che opera a piena risoluzione, e il suo peso sul bilancio complessivo emerge più avanti.
 
 \paragraph{Stadio con Q-K Token Attention}
 \label{subsec:stadio_qkta}
@@ -158,7 +158,7 @@ La decisione binaria lascia passare o azzera i canali della Key di quella testa 
 
 \paragraph{Secondo patch embedding e stadio con SSA}
 \label{subsec:stadio_ssa}
-Il secondo patch embedding segue lo stesso schema a due rami. Il ramo principale applica una convoluzione $3\times3$ da 64 a 128 canali e una seconda con passo 2, la scorciatoia una convoluzione $1\times1$ con passo 2. Ne risultano 128 canali a un sedicesimo della risoluzione d'ingresso, cioè 64 token. Il secondo stadio impiega la SSA, con Query, Key e Value spiking~\eqref{eq:spiking_qkv} divise in 8 teste da 16 canali. Per ciascuna testa
+Il secondo patch embedding segue lo stesso schema a due rami. Il ramo principale applica una convoluzione $3\times3$ da 64 a 128 canali e una seconda con passo 2, la shortcut una convoluzione $1\times1$ con passo 2. Ne risultano 128 canali a un sedicesimo della risoluzione d'ingresso, cioè 64 token. Il secondo stadio impiega la SSA, con Query, Key e Value spiking~\eqref{eq:spiking_qkv} divise in 8 teste da 16 canali. Per ciascuna testa
 \begin{equation}
 \label{eq:ssa_baseline}
 Y=\operatorname{SN}_{0{,}5}\bigl(\beta\,Q(K^{\top}V)\bigr),
@@ -193,9 +193,9 @@ La tabella~\ref{tab:architettura_baseline} riporta, blocco per blocco, le dimens
 \hline
 \textbf{Blocco} & \textbf{Operazioni principali} & \textbf{Uscita} & \textbf{Parametri} & \textbf{Stato} \\
 \hline
-Primo patch embedding & 4 conv.\ $3\times3$ ($2\to32\to64\to64\to64$), scorciatoia $1\times1$ a passo 8 & $64\times16\times16$ & $95\,360$ & $884\,736$ \\
+Primo patch embedding & 4 conv.\ $3\times3$ ($2\to32\to64\to64\to64$), shortcut $1\times1$ a passo 8 & $64\times16\times16$ & $95\,360$ & $884\,736$ \\
 Stadio 1 & QKTA a 8 teste, MLP $64\to128\to64$ & $64\times16\times16$ & $29\,440$ & $100\,352$ \\
-Secondo patch embedding & conv.\ $3\times3$ ($64\to128$), conv.\ $3\times3$ a passo 2, scorciatoia $1\times1$ a passo 2 & $128\times8\times8$ & $230\,144$ & $49\,152$ \\
+Secondo patch embedding & conv.\ $3\times3$ ($64\to128$), conv.\ $3\times3$ a passo 2, shortcut $1\times1$ a passo 2 & $128\times8\times8$ & $230\,144$ & $49\,152$ \\
 Stadio 2 & SSA a 8 teste, MLP $128\to256\to128$ & $128\times8\times8$ & $132\,864$ & $65\,536$ \\
 Readout e testa & media su spazio e tempo, lineare $128\to C$ & $C$ & $129\,C$ & 0 \\
 \hline
@@ -209,7 +209,7 @@ La figura~\ref{fig:architettura_baseline}c mostra che parametri e stato si distr
 \paragraph{Differenze rispetto a QKFormer}
 \label{subsec:differenze_qkformer}
 
-Rispetto alla configurazione neuromorfica di QKFormer (sezione~\ref{subsec:gerarchia_patch}), la baseline conserva la sequenza di un blocco QKTA e di un blocco SSA, il patch embedding con scorciatoia e la separazione tra memoria neuronale e interazioni all'interno del passo. Cambiano la scala e alcuni dettagli costruttivi, riassunti nella tabella~\ref{tab:confronto_qkformer}. La differenza nel numero degli stadi è meno marcata di quanto sembri, perché nella configurazione originale il primo stadio non contiene blocchi e si riduce al patch embedding. Più sostanziali sono la larghezza massima, dimezzata da 256 a 128 canali, il numero dei parametri, sceso a circa un terzo, e la lunghezza delle sequenze, di 40 passi anziché 16. L'implementazione, infine, mantiene il tempo come asse separato prima del neurone di uscita della SSA, il punto in cui gli autori hanno segnalato un errore del codice ufficiale~\cite{qkformerImplementationNotice}, e nella baseline quel problema non si presenta.
+Rispetto alla configurazione neuromorfica di QKFormer (sezione~\ref{subsec:gerarchia_patch}), la baseline conserva la sequenza di un blocco QKTA e di un blocco SSA, il patch embedding con shortcut e la separazione tra memoria neuronale e interazioni all'interno del passo. Cambiano la scala e alcuni dettagli costruttivi, riassunti nella tabella~\ref{tab:confronto_qkformer}. La differenza nel numero degli stadi è meno marcata di quanto sembri, perché nella configurazione originale il primo stadio non contiene blocchi e si riduce al patch embedding. Più sostanziali sono la larghezza massima, dimezzata da 256 a 128 canali, il numero dei parametri, sceso a circa un terzo, e la lunghezza delle sequenze, di 40 passi anziché 16. L'implementazione, infine, mantiene il tempo come asse separato prima del neurone di uscita della SSA, il punto in cui gli autori hanno segnalato un errore del codice ufficiale~\cite{qkformerImplementationNotice}, e nella baseline quel problema non si presenta.
 
 \begin{table}[t]
 \centering
@@ -318,7 +318,7 @@ Su DVS-Lip e DVS128 Gesture si misura anche come la decisione si formi nel tempo
 
 \paragraph{Partizioni riservate}
 \label{subsec:partizioni_riservate}
-Tutte le metriche riportate nei capitoli successivi sono misurate sulla validazione di sviluppo, salvo indicazione esplicita. Le partizioni riservate restano escluse dallo sviluppo, dalla selezione dei checkpoint e dalla caratterizzazione computazionale. L'unica eccezione riguarda alcune analisi diagnostiche, presentate separatamente, in cui checkpoint già selezionati su DVS-Lip e THU-EACT-50-CHL sono stati valutati in sola inferenza sul test ufficiale. Quei risultati descrivono il comportamento di modelli già scelti e non vengono usati per sceglierne altri. % TODO: \ref al capitolo dell'analisi trasversale (diagnostica sul test ufficiale).
+Tutte le metriche riportate nei capitoli successivi sono misurate sulla validazione di sviluppo, salvo indicazione esplicita. Le partizioni riservate restano escluse dallo sviluppo, dalla selezione dei checkpoint e dalla caratterizzazione computazionale. L'unica eccezione riguarda alcune analisi diagnostiche, presentate separatamente, in cui checkpoint già selezionati su DVS-Lip e THU-EACT-50-CHL sono stati valutati in sola inferenza sul test ufficiale. Quei risultati descrivono il comportamento di modelli già scelti e non vengono usati per sceglierne altri (sezioni~\ref{sec:uso_memoria} e~\ref{sec:errori}).
 
 
 % ==============================================================================
@@ -362,7 +362,7 @@ Per riassumere i conteggi in un'unica grandezza si adotta la stima dell'equazion
 \section{Il riferimento nei capitoli successivi}
 \label{sec:sintesi_protocollo}
 
-Dataset e partizioni, ricetta di addestramento, regola di selezione del checkpoint, metriche e grandezze di costo restano gli stessi in tutti i capitoli sperimentali. Cambiano invece, da un capitolo all'altro, la rete di partenza e l'ingresso, secondo il percorso descritto all'inizio del capitolo e riassunto nella tabella~\ref{tab:mappa_riferimenti}. In ogni capitolo varia un solo fattore, e i confronti avvengono sempre con il riferimento di quel capitolo. I nomi con cui modelli e varianti compaiono nel testo sono descrittivi, e la loro corrispondenza con le esecuzioni effettive è riportata in appendice. % TODO: \ref all'appendice di riproducibilità
+Dataset e partizioni, ricetta di addestramento, regola di selezione del checkpoint, metriche e grandezze di costo restano gli stessi in tutti i capitoli sperimentali. Cambiano invece, da un capitolo all'altro, la rete di partenza e l'ingresso, secondo il percorso descritto all'inizio del capitolo e riassunto nella tabella~\ref{tab:mappa_riferimenti}. In ogni capitolo varia un solo fattore, e i confronti avvengono sempre con il riferimento di quel capitolo. I dettagli necessari a ripetere gli esperimenti, dal frazionamento del batch agli iperparametri dei singoli moduli, sono raccolti nell'appendice~\ref{app:riproducibilita}.
 
 \par\medskip\noindent
 \begin{minipage}{\textwidth}

@@ -68,8 +68,18 @@
 % 2) or
 \paginavuota % to manually create a blank page
 
-\sommario
+% Sommario in italiano, seguito dall'abstract in inglese
+{\renewcommand{\summaryname}{Sommario}\sommario}
+\begin{otherlanguage}{italian}
 \input{content/summary}
+\end{otherlanguage}
+
+\phantom{0}
+\cleardoublepage
+\thispagestyle{empty}
+
+{\renewcommand{\summaryname}{Abstract}\sommario}
+\input{content/abstract}
 
 \phantom{0}
 \cleardoublepage
