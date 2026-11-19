@@ -26,3 +26,6 @@
 \let\oldnorm\norm
 \def\norm{\@ifstar{\oldnorm}{\oldnorm*}}
 \makeatother
+
+% Titoletto non numerato, su una riga propria, escluso dall'indice (al posto di \paragraph nei capitoli 5-7)
+\newcommand{\titoletto}[1]{\subsubsection*{#1}}

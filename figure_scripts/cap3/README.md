@@ -15,3 +15,6 @@ Output in `images/cap3/`, anteprime PNG in `anteprime/`.
   comprendono già quelle del mixer.
 - `fig_solidita.py`: baseline e modello di riferimento sui quattro dataset (barre = stesso seed per i due modelli,
   punti = ripetizioni ulteriori) e Macro-F1 in funzione dei parametri su DVS-Lip per 128, 192 e 256 canali.
+- `fig_ritardi_appresi.py`: spostamento medio dei ritardi appresi per ramo durante l'addestramento e frazione di
+  canali spostati al checkpoint selezionato, dal `learned_delay_trajectory.csv` del run
+  `E0_C0_M--f-tcap-stage1-dwc3-learnable-delays` su DVS-Lip.

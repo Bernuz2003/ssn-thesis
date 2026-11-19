@@ -1,31 +1,26 @@
 \chapter{Memoria temporale relazionale}
 \label{chap:memoria_relazionale}
 
-% Stato al 2026-11-17: struttura da docs/STRUTTURA_NARRATIVA_E_RISULTATI_CAPITOLI_5_6_7.md, capitolo completo (5.1-5.7).
-% Valori PROVVISORI su DVS-Lip in 5.5 e 5.7 (checkpoint IRM 20261026_112001): aggiornare con le valutazioni sul
-% checkpoint di riferimento 20261112_082513 (sweep di compressione, diagnostiche sul test, interventi sulle bande).
-% Numeri e confronti appaiati da figure_scripts/cap5/risultati5.py. Su DVS-Lip l'IRM antisimmetrico di riferimento e'
-% VC_RI_M--interval-antisymmetric-r16__20261112_082513_589585__seed42 (Macro-F1 57,47), addestrato nelle stesse condizioni
-% del modello di riferimento e dei controlli. Nel testo non si menzionano altri addestramenti della stessa configurazione.
-% Il capitolo presenta soltanto DVS-Lip e THU-EACT-50-CHL; Gesture e CIFAR10-DVS sono esclusi per scelta.
-% Scaletta e numeri: docs/STRUTTURA_NARRATIVA_E_RISULTATI_CAPITOLI_5_6_7.md (repository di ricerca, 17/11/2026).
+% Riscrittura del 2026-11-19 secondo docs/STRUTTURA_NARRATIVA_E_RISULTATI_CAPITOLI_5_6_7.md (repository di ricerca,
+% versione del 19/11). Scaletta approvata: 5.1 dal richiamo al confronto, 5.2 il modulo (ex 5.2 e 5.3 unite),
+% 5.3 risultato a 0,5 M e che cosa usa la rete, 5.4 controlli, 5.5 due colli di bottiglia. La compressione passa al
+% capitolo 6. Titoletti interni con \titoletto (mai \paragraph).
+% Su DVS-Lip l'IRM antisimmetrico di riferimento e' VC_RI_M--interval-antisymmetric-r16__20261112_082513_589585__seed42
+% (Macro-F1 57,47), addestrato nelle stesse condizioni del modello di riferimento e dei controlli. Nel testo non si
+% menzionano altri addestramenti della stessa configurazione. Solo DVS-Lip e THU-EACT-50-CHL.
 % Relazione verificata in src/etsr/models/interval.py: r = (A m)(B z) -/+ (B m)(A z), A,B in R^{16x128} condivise,
-% U_k (relation_weight) inizializzate a zero, buffer con corrente e proiezioni (C + 2r valori per passo).
-% Wang et al. (arXiv 2610.37823, 27/10/2026) verificato sulla pagina dell'abstract.
-%
-% Fonti verificate sul repository temporal-event-spiking-research (commit 5a03fec):
-% src/etsr/models/interval.py (CausalIntervalChannelMixer), temporal.py (CMLCM, init a zero),
-% mini_qkformer.py (sostituzione del solo patch_embed2.down con fork dell'RNG e pesi condivisi),
-% docs/TCAP_RELAZIONALE_INTERVALI.md, docs/EVOLUZIONE_DELLA_SPERIMENTAZIONE_DETTAGLIATA.md par. 13.
-% Run citati: dvslip/VC_RI_M--interval-linear__20261026_110201_907982__seed42 (54,67 F1),
-% thu_eact_50_chl/VC_RI_M--interval-linear__20261026_153644_696468__seed42 (54,44 F1),
-% riferimenti VC del Capitolo 4. Figure: figure_scripts/cap5 (fig_richiamo_confronto, fig_bande, fig_disponibilita, fig_relazione).
+% U_k inizializzate a zero, buffer con corrente e proiezioni (C + 2r valori per passo). Stato del sito su DVS-Lip:
+% 15 x 64 x 160 = 153.600 valori (600 KiB in FP32, come nei report di b_minus_final_inference).
+% Bande senza confronto contro modello di riferimento (validazione, figure_scripts/cap5/risultati5.paired):
+% DVS-Lip -2,0 acc. (p = 0,039), THU -0,5 acc. (p = 0,89).
+% Wang et al. (arXiv 2610.37823) verificato sulla pagina dell'abstract.
+% Figure: figure_scripts/cap5 (fig_richiamo_confronto, fig_bande, fig_disponibilita, fig_relazione).
 
-Con il clock fissato nel capitolo precedente, ogni passo ha una durata fisica nota, e i ritardi del mixer temporale corrispondono a distanze precise nel passato. Questo capitolo si chiede come usare meglio quella memoria. La domanda non riguarda quanto passato conservare, ma che cosa farne quando lo si mette accanto al presente.
+Con il clock fissato nel capitolo precedente ogni passo ha una durata fisica nota, e i ritardi del mixer temporale corrispondono a distanze precise nel passato. Questo capitolo si chiede come usare meglio quella memoria. La domanda non riguarda quanto passato conservare, ma che cosa farne quando lo si mette accanto al presente.
 
-Il punto di partenza è il modo in cui il modello di riferimento tratta il passato. Il mixer a ritardi lo richiama e lo somma al presente, ma non li confronta mai direttamente. Il capitolo propone un modulo che separa il problema in tre parti, che cosa del passato conservare, quanto di quel passato esista davvero e come confrontarlo con il presente, e le affronta nell'ordine. Seguono i risultati, con i controlli che ne verificano l'origine, le alternative che delimitano le scelte del modulo e, infine, il suo costo e la sua compressione. Per tutto il capitolo l'ingresso è la rappresentazione a lunghezza variabile, e il termine di confronto è il modello di riferimento addestrato con essa (tabella~\ref{tab:risultati_clock}).
+Il punto di partenza è il modo in cui il modello di riferimento tratta il passato. Il mixer a ritardi lo richiama e lo somma al presente, ma non mette mai a confronto i due. Il capitolo propone un modulo che riassume il passato a distanze fisiche fisse, tiene conto di quanta storia esista davvero e confronta ciascun riassunto con il presente attraverso un termine che cambia segno quando i due istanti si scambiano. Dopo averlo descritto, ne misura l'effetto con circa mezzo milione di parametri, verifica che la rete addestrata si appoggi davvero al confronto e cerca, con una serie di controlli, da dove venga il guadagno. I controlli finiscono per raccontare qualcosa anche sui dati. Mostrano che i due compiti studiati sono frenati da limiti diversi, e questa diagnosi orienta le scelte del capitolo~\ref{chap:scalabilita}. Per tutto il capitolo l'ingresso è la rappresentazione a lunghezza variabile, e il termine di confronto è il modello di riferimento addestrato con essa (tabella~\ref{tab:risultati_clock}).
 
-Gli esperimenti si concentrano su DVS-Lip e THU-EACT-50-CHL. Il capitolo~\ref{chap:clock_input} ha mostrato che su DVS128 Gesture il principale problema temporale, il verso delle rotazioni, viene già risolto dal clock, e su CIFAR10-DVS la dinamica è imposta dall'acquisizione. Su questi due dataset la memoria della rete ha poco da aggiungere, e nelle prove svolte le varianti del capitolo non si distinguono dal riferimento. La lettura labiale e il riconoscimento di azioni sono invece compiti in cui la struttura temporale del segnale conta davvero, ed è su di essi che conviene misurare una memoria.
+Gli esperimenti si concentrano su DVS-Lip e THU-EACT-50-CHL. Il capitolo~\ref{chap:clock_input} ha mostrato che su DVS128 Gesture il principale problema temporale, il verso delle rotazioni, viene già risolto dal clock, e su CIFAR10-DVS la dinamica è imposta dall'acquisizione. Su questi due dataset la memoria della rete ha poco da aggiungere, e nelle prove svolte il modulo non si distingue dal riferimento. La lettura labiale e il riconoscimento di azioni sono invece compiti in cui la struttura temporale del segnale conta davvero, ed è su di essi che conviene misurare una memoria.
 
 
 % ==============================================================================
@@ -70,21 +65,24 @@ I requisiti si traducono nella forma generale
 \label{eq:irm_generale}
 u_t=z_t+\sum_{k=1}^{K}b_{k,t}\Bigl[W_k\,m_{k,t}+U_k\,\rho\bigl(m_{k,t},z_t\bigr)\Bigr],
 \end{equation}
-dove $z_t\in\mathbb R^{C}$ è la corrente dello strato al passo $t$ in una posizione spaziale, prima del neurone. Il vettore $m_{k,t}$ riassume il passato alla $k$-esima scala, il coefficiente $b_{k,t}$ tiene conto della storia disponibile, $W_km_{k,t}$ è il richiamo lineare, erede diretto del mixer a ritardi, e $\rho(m_{k,t},z_t)$ è una relazione tra passato e presente, riportata nello spazio delle feature dalla matrice $U_k$. Il modulo che ne risulta viene indicato nel seguito come \emph{interval-relational mixer} (IRM). Il nome descrive una combinazione di ingredienti noti e non rivendica un nuovo tipo di operatore.
+dove $z_t\in\mathbb R^{C}$ è la corrente dello strato al passo $t$ in una posizione spaziale, prima del neurone. Il vettore $m_{k,t}$ riassume il passato alla $k$-esima scala, il coefficiente $b_{k,t}$ tiene conto della storia disponibile, $W_km_{k,t}$ è il richiamo lineare, erede diretto del mixer a ritardi, e $\rho(m_{k,t},z_t)$ è una relazione tra passato e presente, riportata nello spazio delle feature dalla matrice $U_k$. Il modulo che ne risulta viene indicato nel seguito come \emph{interval-relational mixer} (IRM).
 
-La forma separa tre domande che conviene tenere distinte. Che cosa del passato viene conservato, nel riassunto $m_{k,t}$. Quanto di quel passato esiste davvero, nel coefficiente $b_{k,t}$. Come il passato viene confrontato con il presente, nella relazione $\rho$. Ponendo $\rho=0$ si ottiene una memoria puramente lineare, che è a sua volta un controllo informativo, mentre cambiando la relazione a parità di tutto il resto si possono confrontare forme di interazione con proprietà diverse. La sezione~\ref{sec:memoria_intervalli} affronta le prime due domande, la sezione~\ref{sec:relazione} la terza.
+La forma separa tre domande che conviene tenere distinte. Che cosa del passato viene conservato, nel riassunto $m_{k,t}$, quanto di quel passato esiste davvero, nel coefficiente $b_{k,t}$, e come il passato viene confrontato con il presente, nella relazione $\rho$. Ponendo $\rho=0$ si ottiene una memoria puramente lineare, che è a sua volta un controllo informativo, mentre cambiando la relazione a parità di tutto il resto si possono confrontare forme di interazione con proprietà diverse. La sezione successiva affronta le tre domande nell'ordine.
 
 Per attribuire l'effetto con chiarezza, l'IRM sostituisce il mixer a ritardi in un solo punto della rete, nel secondo patch embedding, sulla corrente della convoluzione con passo 2, dopo la batch normalization e prima del neurone. È una scelta di progetto. A quel livello la rappresentazione ha 128 canali a un sedicesimo della risoluzione d'ingresso, le feature sono più astratte di quelle del primo stadio e le posizioni sono poche, 64 per un ingresso di $128\times128$ pixel, sicché il costo del confronto resta contenuto. Il primo patch embedding conserva il mixer a ritardi, mentre SSA, MLP e readout restano invariati.
 
 
 % ==============================================================================
-%  Memoria causale a intervalli e disponibilità della storia
+%  Il modulo
 % ==============================================================================
 
-\section{Memoria causale a intervalli e disponibilità della storia}
+\section{Riassumere il passato e confrontarlo con il presente}
 \label{sec:memoria_intervalli}
+\label{sec:relazione}
 
-\paragraph{Dai ritardi puntuali alle bande}
+Il modulo si costruisce in due tempi. Il primo sostituisce i pochi ritardi letti dal mixer con bande di passi contigui e tiene conto di quanta storia ciascuna banda contenga davvero. Il secondo aggiunge il confronto tra questi riassunti e il presente.
+
+\titoletto{Dai ritardi puntuali alle bande}
 \label{subsec:ritardi_bande}
 Il mixer a ritardi legge il passato in pochi punti. Con la rappresentazione a lunghezza variabile, su DVS-Lip i ritardi $(2,4,7,15)$ campionano 4 dei 15 passi che separano il presente dal ritardo massimo, e su THU-EACT-50-CHL 4 su 23 (figura~\ref{fig:bande}). Ciò che accade nei passi intermedi raggiunge il mixer soltanto attraverso le altre vie della rete, in particolare la memoria dei neuroni. Una lettura così rada ha un difetto evidente. Un movimento che avviene un passo prima o un passo dopo cade fuori dal ritardo e sparisce dalla lettura, anche se la sua distanza fisica dal presente è quasi la stessa.
 
@@ -94,7 +92,7 @@ La memoria a intervalli sostituisce i punti con bande contigue di ritardi. Conse
 I_k=\{\ell\in\mathbb N\mid d_{k-1}<\ell\le d_k\},
 \qquad k=1,\ldots,K.
 \end{equation}
-Le bande coprono senza sovrapposizioni tutti i ritardi da 1 a $d_K$, il presente ne resta escluso e continua ad arrivare dal percorso diretto, e l'orizzonte complessivo coincide con quello del mixer a ritardi. Su DVS-Lip le bande sono $[1,2]$, $[3,4]$, $[5,7]$ e $[8,15]$, da circa $27$ a $411\,\mathrm{ms}$ nel passato. Su THU-EACT-50-CHL diventano $[1,3]$, $[4,6]$, $[7,11]$ e $[12,23]$, e arrivano a $1{,}6\,\mathrm{s}$.
+Le bande coprono senza sovrapposizioni tutti i ritardi da 1 a $d_K$. Il presente ne resta escluso e continua ad arrivare dal percorso diretto, e l'orizzonte complessivo coincide con quello del mixer a ritardi. Su DVS-Lip le bande sono $[1,2]$, $[3,4]$, $[5,7]$ e $[8,15]$, da circa $27$ a $411\,\mathrm{ms}$ nel passato. Su THU-EACT-50-CHL diventano $[1,3]$, $[4,6]$, $[7,11]$ e $[12,23]$, e arrivano a $1{,}6\,\mathrm{s}$.
 
 \begin{figure}[t]
     \centering
@@ -103,10 +101,11 @@ Le bande coprono senza sovrapposizioni tutti i ritardi da 1 a $d_K$, il presente
     \label{fig:bande}
 \end{figure}
 
-Le bande si allargano allontanandosi dal presente. Il passato recente è descritto con la risoluzione di uno o due passi, quello più remoto con medie su otto o dodici passi. È una forma rudimentale di compressione del tempo, in cui la precisione con cui un evento viene collocato diminuisce con la sua distanza, vicina nello spirito alle rappresentazioni a scala logaritmica proposte per la memoria temporale~\cite{shankar2012scale}. Un'alternativa sarebbe lasciare che la rete apprenda la posizione dei ritardi, come avviene in alcune SNN dotate di ritardi sinaptici apprendibili~\cite{hammouamri2024learning}. Qui si è preferito conservare i bordi del modello di riferimento, così che memoria a punti e memoria a bande coprano esattamente lo stesso orizzonte.
+Le bande si allargano allontanandosi dal presente. Il passato recente è descritto con la risoluzione di uno o due passi, quello più remoto con medie su otto o dodici passi. È una forma rudimentale di compressione del tempo, in cui la precisione con cui un evento viene collocato diminuisce con la sua distanza, vicina nello spirito alle rappresentazioni a scala logaritmica proposte per la memoria temporale~\cite{shankar2012scale}. Un'alternativa sarebbe lasciare che la rete apprenda la posizione dei ritardi, come avviene in alcune SNN dotate di ritardi sinaptici apprendibili~\cite{hammouamri2024learning}. Qui si è preferito conservare i bordi del modello di riferimento, così che memoria a punti e memoria a bande coprano esattamente lo stesso orizzonte. I bordi sono quindi una scelta tracciabile, non un ottimo trovato dalla rete.
 
-\paragraph{Medie sulla storia disponibile}
+\titoletto{La storia disponibile}
 \label{subsec:medie_disponibili}
+\label{subsec:storia_disponibile}
 All'interno di ciascuna banda il passato viene riassunto dalla media delle correnti. All'inizio della sequenza, però, una banda può essere vuota o soltanto in parte riempita, perché i passi corrispondenti precederebbero il primo evento. Indicando con $J_{k,t}=\{\ell\in I_k\mid \ell\le t\}$ i ritardi della banda effettivamente osservati al passo $t$, contato a partire da zero, e con $n_{k,t}=|J_{k,t}|$ il loro numero, il riassunto è
 \begin{equation}
 \label{eq:media_intervallo}
@@ -116,13 +115,9 @@ m_{k,t}=
 0, & n_{k,t}=0.
 \end{cases}
 \end{equation}
-La media divide per la storia realmente disponibile e non per la larghezza nominale della banda. Un riassunto parziale non viene così diluito da zeri che non corrispondono ad alcuna osservazione.
+La media divide per la storia realmente disponibile e non per la larghezza nominale della banda, così che un riassunto parziale non venga diluito da zeri che non corrispondono ad alcuna osservazione. Ha poi due effetti. Attenua il rumore e rende la memoria tollerante a piccoli spostamenti temporali, perché un movimento anticipato o ritardato di un passo resta quasi sempre nella stessa banda. Il prezzo è la perdita dell'ordine all'interno della banda, che la media rende invisibile. Le bande strette vicino al presente e il percorso diretto limitano il danno dove l'ordine fine conta di più, ma non lo annullano.
 
-La media produce due effetti. Attenua il rumore e rende la memoria tollerante a piccoli spostamenti temporali, perché un movimento anticipato o ritardato di un passo resta quasi sempre nella stessa banda. Il prezzo è la perdita dell'ordine all'interno della banda, che la media rende invisibile. Le bande strette vicino al presente e il percorso diretto limitano il danno dove l'ordine fine conta di più, ma non lo annullano.
-
-\paragraph{Quanta storia è davvero disponibile}
-\label{subsec:storia_disponibile}
-Nel mixer a ritardi il passato mancante è rappresentato da zeri nel buffer. Poiché le proiezioni non hanno bias, uno zero produce una corrente nulla, e la scelta è innocua dal punto di vista numerico. Lascia però indistinguibili due situazioni molto diverse, una feature che vale davvero zero e un passato che non esiste ancora.
+Resta da dire alla rete quanto di quel passato esista. Nel mixer a ritardi il passato mancante è rappresentato da zeri nel buffer. Poiché le proiezioni non hanno bias, uno zero produce una corrente nulla, e la scelta è innocua dal punto di vista numerico. Lascia però indistinguibili due situazioni molto diverse, una feature che vale davvero zero e un passato che non esiste ancora.
 
 Il fenomeno non è marginale (figura~\ref{fig:disponibilita}). Con le lunghezze della rappresentazione a lunghezza variabile, la banda più lontana dispone di una storia completa nel $62\%$ dei passi su DVS-Lip, ma soltanto nel $43\%$ su THU-EACT-50-CHL, dove in quasi un terzo dei passi la trova del tutto vuota. Su questo dataset il ritardo massimo, 23 passi, supera la metà della lunghezza tipica di una sequenza, e la memoria più lontana lavora più spesso a regime ridotto che a regime pieno.
 
@@ -140,38 +135,19 @@ b_{k,t}=\mathbf 1\bigl[n_{k,t}>0\bigr]\;2\,\sigma\bigl(\alpha_k\,q_{k,t}+\beta_k
 \end{equation}
 dove $\sigma$ è la sigmoide e $\alpha_k$, $\beta_k$ sono due parametri apprendibili per banda. All'inizializzazione $\alpha_k=\beta_k=0$, e il coefficiente vale 1 per ogni banda che contenga almeno un passo. Durante l'addestramento la rete può imparare ad attenuare o ad amplificare un riassunto in funzione di quanto è completo, al costo di $2K=8$ parametri.
 
-Il coefficiente dipende soltanto dal tempo trascorso dall'inizio della sequenza, non dalle feature, e non va confuso con il gate di contenuto della variante condizionale del mixer a ritardi discussa nel capitolo~\ref{chap:riallocazione_budget}. Rende tuttavia accessibile alla rete l'età della registrazione, cioè quanti passi siano trascorsi dal primo evento, ma non la sua durata complessiva, che resta ignota fino all'ultimo passo.
+Il coefficiente dipende soltanto dal tempo trascorso dall'inizio della sequenza, non dalle feature, e non va confuso con il gate di contenuto della variante condizionale del mixer a ritardi discussa nel capitolo~\ref{chap:riallocazione_budget}. Rende accessibile alla rete l'età della registrazione, cioè quanti passi siano trascorsi dal primo evento, ma non la sua durata complessiva, che resta ignota fino all'ultimo passo. Con questo meccanismo la memoria tiene separate tre condizioni che sul piano numerico potrebbero confondersi, le stesse discusse a proposito dell'equazione~\eqref{eq:maschera_passi_validi}. Il passato che precede il primo evento non esiste e non entra nel conteggio. Un bin valido privo di eventi è un'osservazione di silenzio, partecipa alla media e contribuisce a $n_{k,t}$. Il padding introdotto dal batching, infine, non entra in alcun calcolo e non fa avanzare il conteggio.
 
-Con questo meccanismo la memoria tiene separate tre condizioni che sul piano numerico potrebbero confondersi, le stesse discusse a proposito dell'equazione~\eqref{eq:maschera_passi_validi}. Il passato che precede il primo evento non esiste e non entra nel conteggio. Un bin valido privo di eventi è un'osservazione di silenzio, partecipa alla media e contribuisce a $n_{k,t}$. Il padding introdotto dal batching, infine, non entra in alcun calcolo e non fa avanzare il conteggio.
+\titoletto{Il confronto antisimmetrico}
+La memoria a intervalli, presa da sola, resta un richiamo. Offre un riassunto del passato più completo e più robusto dei punti isolati, e sa quanto di quel passato esista davvero, ma lo restituisce al presente come una somma. Come mostreranno i controlli della sezione~\ref{sec:controlli_irm}, questa sola modifica non migliora il modello di riferimento su nessuno dei due dataset, e su DVS-Lip lo peggiora. Riassumere meglio il passato non basta, e il passo successivo consiste nel confrontarlo con il presente.
 
-\paragraph{Implementazione e costo}
-\label{subsec:costo_memoria_intervalli}
-Il calcolo delle medie non richiede di sommare ogni volta tutti i passi di una banda. La memoria conserva le correnti degli ultimi $d_K$ passi, esattamente come il buffer del mixer a ritardi, e un contatore della storia disponibile per ciascun campione. Durante l'addestramento le somme di ogni banda si ottengono come differenze di somme cumulative lungo il tempo, sicché il costo per passo non dipende dalla larghezza delle bande. Rispetto al mixer a ritardi restano le stesse $K$ proiezioni $C\times C$ per posizione e passo, applicate ai riassunti anziché ai singoli punti. A queste si aggiungono, per ogni canale, una manciata di operazioni elementari per banda, tra sottrazioni, divisioni e coefficienti, contro le $KC$ moltiplicazioni e accumuli che ogni canale richiede alle proiezioni. Con $C=128$ il sovraccarico aritmetico resta di oltre un ordine di grandezza inferiore al costo delle proiezioni.
-
-Lo stato da conservare tra un passo e il successivo coincide con il buffer del mixer a ritardi nello stesso punto, $d_K\times C$ valori per posizione, più un contatore per campione. Su DVS-Lip, con $d_K=15$ e 64 posizioni, sono $122\,880$ valori per campione. Le formule sono verificate nel codice rispetto a una loro definizione letterale, insieme alla causalità del modulo e all'equivalenza tra l'elaborazione dell'intera sequenza, quella a blocchi e quella passo per passo. Come per il resto della rete, la causalità riguarda il modulo, perché durante l'addestramento la batch normalization aggrega passi diversi (sezione~\ref{subsec:microbatch_bn}).
-
-All'inizializzazione le matrici $W_k$ partono dagli stessi valori nulli del mixer a ritardi e i coefficienti di disponibilità valgono 1, sicché il modulo restituisce esattamente la corrente presente. Poiché anche il mixer a ritardi parte da matrici nulle, e i pesi condivisi vengono generati nello stesso modo, in un flusso pseudo-casuale separato da quello del nuovo modulo, la rete con la memoria a intervalli parte esattamente dalla stessa funzione del modello di riferimento.
-
-La memoria a intervalli, presa da sola, resta un richiamo. Offre un riassunto del passato più completo e più robusto dei punti isolati, e sa quanto di quel passato esista davvero, ma lo restituisce al presente come una somma. Come mostrerà la sezione~\ref{sec:risultati_irm}, questa sola modifica non migliora il modello di riferimento su nessuno dei due dataset, e su DVS-Lip lo peggiora. Riassumere meglio il passato non basta. Il passo successivo consiste nel confrontarlo con il presente.
-
-% ==============================================================================
-%  Il confronto tra passato e presente
-% ==============================================================================
-
-\section{Il confronto tra passato e presente}
-\label{sec:relazione}
-
-La memoria a intervalli stabilisce che cosa del passato conservare e quanto ne esista davvero. Resta da decidere come confrontarlo con il presente, cioè la forma della relazione $\rho$ nell'equazione~\eqref{eq:irm_generale}. Le richieste sono tre. La relazione deve dipendere da passato e presente insieme, deve costare poco e deve distinguere l'ordine, rispondendo in modo diverso a «prima A, poi B» e a «prima B, poi A».
-
-\paragraph{Due proiezioni e un prodotto}
-La forma più semplice che soddisfa le prime due richieste è un prodotto elemento per elemento tra proiezioni a basso rango, una costruzione già diffusa per combinare due rappresentazioni con pochi parametri~\cite{kim2017hadamard}. Due matrici $A,B\in\mathbb R^{r\times C}$, con $r=16$, proiettano su $r$ componenti tanto il riassunto del passato quanto la corrente presente, e la relazione antisimmetrica è
+Si tratta di scegliere la forma della relazione $\rho$ nell'equazione~\eqref{eq:irm_generale}. Le richieste sono tre. La relazione deve dipendere da passato e presente insieme, deve costare poco e deve distinguere l'ordine, rispondendo in modo diverso a «prima A, poi B» e a «prima B, poi A». La forma più semplice che soddisfa le prime due è un prodotto elemento per elemento tra proiezioni a basso rango, una costruzione già diffusa per combinare due rappresentazioni con pochi parametri~\cite{kim2017hadamard}. Due matrici $A,B\in\mathbb R^{r\times C}$, con $r=16$, proiettano su $r$ componenti tanto il riassunto del passato quanto la corrente presente, e la relazione antisimmetrica è
 \begin{equation}
 \label{eq:relazione_antisimmetrica}
 \rho^{-}(m,z)=(Am)\odot(Bz)-(Bm)\odot(Az),
 \end{equation}
-dove $\odot$ indica il prodotto elemento per elemento e gli indici $k$ e $t$ sono omessi per leggibilità. La relazione simmetrica $\rho^{+}$, usata come controllo, ha il segno più. Come nel correlatore dell'equazione~\eqref{eq:reichardt}, ogni componente moltiplica il passato letto da una proiezione per il presente letto dall'altra, e sottrae il prodotto speculare. Le proiezioni $A$ e $B$ prendono il posto dei due recettori, la banda quello del ritardo. Scambiando passato e presente la relazione antisimmetrica cambia segno, $\rho^{-}(z,m)=-\rho^{-}(m,z)$, mentre quella simmetrica resta invariata. Le due proiezioni sono condivise da tutte le bande, e ogni banda ha una propria matrice $U_k\in\mathbb R^{C\times r}$ che riporta le $r$ componenti nello spazio dei canali.
+dove $\odot$ indica il prodotto elemento per elemento e gli indici $k$ e $t$ sono omessi per leggibilità. Come nel correlatore dell'equazione~\eqref{eq:reichardt}, ogni componente moltiplica il passato letto da una proiezione per il presente letto dall'altra, e sottrae il prodotto speculare. Le proiezioni $A$ e $B$ prendono il posto dei due recettori, la banda quello del ritardo. Scambiando passato e presente la relazione cambia segno, $\rho^{-}(z,m)=-\rho^{-}(m,z)$, ed è questa proprietà a soddisfare la terza richiesta. Le due proiezioni sono condivise da tutte le bande, e ogni banda ha una propria matrice $U_k\in\mathbb R^{C\times r}$ che riporta le $r$ componenti nello spazio dei canali. La relazione simmetrica $\rho^{+}$, ottenuta con il segno più, resta invariata se si scambiano passato e presente, e servirà come controllo.
 
-\paragraph{Che cosa vede la relazione}
+\titoletto{Che cosa vede la relazione}
 Le due forme sembrano differire per un segno, ma rispondono a cose diverse. Basta scrivere il passato come il presente più una variazione, $m=z+\Delta$. Nella forma antisimmetrica il presente confrontato con sé stesso si annulla, e restano
 \begin{align}
 \label{eq:relazione_variazione}
@@ -180,8 +156,7 @@ Le due forme sembrano differire per un segno, ma rispondono a cose diverse. Bast
 \end{align}
 La forma antisimmetrica dipende soltanto dalla variazione e vale zero quando il passato coincide con il presente. Non vede ogni cambiamento, perché una variazione che le proiezioni non colgono, o che si limita a scalare il vettore, dà ancora zero, ma ciò che vede è sempre un cambiamento. La forma simmetrica contiene invece un termine che dipende dal solo presente, la co-attivazione istantanea delle due proiezioni, e risponde anche a configurazioni che non cambiano nel tempo. Una parte della sua capacità è quindi spesa su un'informazione che con il tempo non ha nulla a che fare.
 
-\paragraph{Una lettura geometrica}
-La differenza ha un'interpretazione intuitiva. Per ciascuna componente $j$ si possono riunire le due proiezioni di un vettore $x$ in un numero complesso, $c_j(x)=a_j^{\top}x+\mathrm{i}\,b_j^{\top}x$, dove $a_j$ e $b_j$ sono le righe $j$-esime di $A$ e $B$. Con questa notazione
+La differenza ha anche un'interpretazione geometrica. Per ciascuna componente $j$ si possono riunire le due proiezioni di un vettore $x$ in un numero complesso, $c_j(x)=a_j^{\top}x+\mathrm{i}\,b_j^{\top}x$, dove $a_j$ e $b_j$ sono le righe $j$-esime di $A$ e $B$. Con questa notazione
 \begin{equation}
 \label{eq:relazione_fase}
 \rho^{-}_j=\lvert c_j(m)\rvert\,\lvert c_j(z)\rvert\,\sin(\theta_z-\theta_m),
@@ -199,10 +174,17 @@ dove $\theta_m$ e $\theta_z$ sono le fasi di $c_j(m)$ e di $c_j(z)$. Ogni compon
 
 La figura~\ref{fig:relazione}b mostra la differenza su un esempio sintetico. Un vettore ruota a velocità costante in un verso, si ferma e poi ruota nel verso opposto. La forma antisimmetrica resta costante e positiva durante la prima rotazione, si annulla durante la pausa e diventa negativa durante la seconda. Codifica il verso del movimento e ignora la posizione. La forma simmetrica oscilla seguendo la posizione del vettore in entrambe le rotazioni, e durante la pausa assume un valore diverso da zero anche se nulla si muove. Le proiezioni apprese dalla rete non sono costrette a descrivere rotazioni, e i loro canali possono avere significati molto diversi. La proprietà, però, resta. La forma antisimmetrica risponde soltanto al modo in cui il presente differisce dal passato.
 
-\paragraph{Costo e partenza}
-La relazione aggiunge al modulo le due proiezioni condivise, $2rC=4\,096$ parametri, e le $K$ matrici $U_k$, altri $KCr=8\,192$. Con gli otto coefficienti di disponibilità, il modello passa da $501\,028$ a $513\,324$ parametri su DVS-Lip, il $2{,}5\%$ in più, e da $494\,578$ a $506\,874$ su THU-EACT-50-CHL. Le proiezioni del presente si calcolano una sola volta per passo e si conservano nel buffer accanto alla corrente, sicché i riassunti delle proiezioni si ottengono con le stesse somme cumulative usate per le correnti. Il buffer passa così da $C$ a $C+2r$ valori per posizione e passo, un quarto in più, e le moltiplicazioni dell'intero modello crescono di circa il $2\%$. La sezione~\ref{sec:compressione} mostra che, dopo l'addestramento, il modulo si lascia comprimere fino a costare meno del mixer a ritardi che sostituisce.
+\titoletto{Costo e punto di partenza}
+\label{subsec:costo_memoria_intervalli}
+Il calcolo delle medie non richiede di sommare ogni volta tutti i passi di una banda. La memoria conserva le correnti degli ultimi $d_K$ passi, esattamente come il buffer del mixer a ritardi, e un contatore della storia disponibile per ciascun campione. Durante l'addestramento le somme di ogni banda si ottengono come differenze di somme cumulative lungo il tempo, sicché il costo per passo non dipende dalla larghezza delle bande. Rispetto al mixer a ritardi restano le stesse $K$ proiezioni $C\times C$ per posizione e passo, applicate ai riassunti anziché ai singoli punti. Le medie e i coefficienti di disponibilità aggiungono per ogni canale una manciata di operazioni elementari per banda, oltre un ordine di grandezza in meno delle $KC$ moltiplicazioni e accumuli che lo stesso canale richiede alle proiezioni.
 
-All'inizializzazione le matrici $U_k$ valgono zero, mentre $A$ e $B$ sono generate in un flusso pseudo-casuale separato da quello del resto della rete. La relazione non contribuisce quindi alla corrente, e la rete parte esattamente dalla stessa funzione del modello di riferimento, come nel caso della sola memoria a intervalli. Le varianti confrontate nella sezione successiva differiscono soltanto per la forma di $\rho$, nulla, simmetrica o antisimmetrica, a parità di tutto il resto, e ogni differenza tra loro nasce dall'addestramento.
+La relazione aggiunge le due proiezioni condivise, $2rC=4\,096$ parametri, e le $K$ matrici $U_k$, altri $KCr=8\,192$. Con gli otto coefficienti di disponibilità, il modello passa da $501\,028$ a $513\,324$ parametri su DVS-Lip, il $2{,}5\%$ in più, e da $494\,578$ a $506\,874$ su THU-EACT-50-CHL. Le proiezioni del presente si calcolano una sola volta per passo e si conservano nel buffer accanto alla corrente, così che anche i loro riassunti si ottengano con le stesse somme cumulative. Il buffer passa da $C$ a $C+2r$ valori per posizione e passo, un quarto in più, e su DVS-Lip, con $d_K=15$ e 64 posizioni, conserva $153\,600$ valori per campione. Le moltiplicazioni dell'intero modello crescono di circa il $2\%$. Il capitolo~\ref{chap:scalabilita} mostrerà che, dopo l'addestramento, il modulo si lascia comprimere fino a costare meno del mixer a ritardi che sostituisce (sezione~\ref{sec:compressione}).
+
+Le formule sono verificate nel codice rispetto a una loro definizione letterale, insieme alla causalità del modulo e all'equivalenza tra l'elaborazione dell'intera sequenza, quella a blocchi e quella passo per passo. Come per il resto della rete, la causalità riguarda il modulo, perché durante l'addestramento la batch normalization aggrega passi diversi (sezione~\ref{subsec:microbatch_bn}).
+
+All'inizializzazione le matrici $W_k$ e $U_k$ valgono zero e i coefficienti di disponibilità valgono 1, sicché il modulo restituisce esattamente la corrente presente. Anche il mixer a ritardi parte da matrici nulle, e i pesi condivisi con il resto della rete vengono generati nello stesso modo, mentre $A$ e $B$ provengono da un flusso pseudo-casuale separato. La rete con l'IRM parte quindi esattamente dalla stessa funzione del modello di riferimento, e ogni differenza tra i due nasce dall'addestramento. Nel resto del capitolo l'IRM usa la relazione antisimmetrica. La memoria senza relazione e quella con la relazione simmetrica tornano nella sezione~\ref{sec:controlli_irm}, tra i controlli.
+
+
 
 
 % ==============================================================================
@@ -211,6 +193,7 @@ All'inizializzazione le matrici $U_k$ valgono zero, mentre $A$ e $B$ sono genera
 
 \section{Risultati su DVS-Lip e THU-EACT-50-CHL}
 \label{sec:risultati_irm}
+\label{sec:controlli_irm}% provvisorio: la sezione dei controlli verra' separata
 
 Tutte le varianti di questa sezione sostituiscono il mixer a ritardi nello stesso punto, il secondo patch embedding, e differiscono tra loro per un solo elemento. La tabella~\ref{tab:risultati_irm} ne riporta la Macro-F1 e la media delle ultime 16 epoche, la figura~\ref{fig:risultati_irm} la differenza rispetto al modello di riferimento, distinguendo le differenze che il confronto appaiato giudica significative (sezione~\ref{sec:metriche_valutazione}).
 
