@@ -61,7 +61,7 @@ Discretizzazione stocastica & scala dei tempi log-uniforme in $[0{,}9;\,1{,}1]$ 
 \end{table}
 
 \paragraph{Profili di costo}
-I costi del capitolo~\ref{chap:riallocazione_budget} sono per campione e provengono da profili misurati sugli stessi 64 campioni della validazione di sviluppo. Quelli della sezione~\ref{sec:compressione} sono per passo, mediati sui passi validi di dodici registrazioni della validazione, e i conteggi del sito sono analitici. Moltiplicazioni con accumulo, parametri e stato non dipendono dal contenuto del campione, mentre gli accumuli effettivamente eseguiti e le operazioni sinaptiche dipendono dall'attività, e vanno quindi confrontati soltanto tra profili ottenuti sugli stessi campioni.
+I costi del capitolo~\ref{chap:riallocazione_budget} sono per campione e provengono da profili misurati sugli stessi 64 campioni della validazione di sviluppo. Quelli della sezione~\ref{sec:compressione} sono per passo, mediati sui passi validi di 32 registrazioni della validazione, e lo stato è contato in valori persistenti. Moltiplicazioni con accumulo, parametri e stato non dipendono dal contenuto del campione, mentre gli accumuli effettivamente eseguiti e le operazioni sinaptiche dipendono dall'attività, e vanno quindi confrontati soltanto tra profili ottenuti sugli stessi campioni.
 
 
 \chapter{Tabelle estese}
@@ -71,6 +71,8 @@ Le tabelle di questa appendice riportano per esteso alcuni risultati che il test
 
 \paragraph{Confronti appaiati}
 La tabella~\ref{tab:confronti_estesi} confronta ogni variante dei capitoli~\ref{chap:memoria_relazionale} e~\ref{chap:scalabilita} con l'IRM antisimmetrico compatto, sulla validazione di sviluppo. La differenza di Macro-F1 è positiva quando la variante fa meglio. Le due colonne di conteggi indicano gli errori dell'IRM che la variante corregge e quelli nuovi che introduce, e il valore di $p$ è quello del test esatto di McNemar su questi conteggi, senza correzione per i confronti multipli.
+
+Le righe raccolte sotto «altre prove» riguardano varianti che il testo principale cita soltanto di passaggio. La variante condizionale del mixer a ritardi è quella della sezione~\ref{sec:ritardi_adattivi}, che decide in base alla corrente presente quanto passato far entrare, senza confrontarlo con il presente. L'IRM con instradamento per contenuto affianca al modulo una piccola rete che, a ogni passo e in ogni posizione, legge la corrente presente, l'intensità della relazione in ciascuna banda e la storia disponibile, e ne ricava quanto passato usare e come ripartirlo fra le bande. Le due collocazioni alternative spostano l'IRM nell'ultimo strato del frontend piramidale, che forma il primo patch embedding, oppure lo usano in entrambi i siti del mixer a ritardi. Le tre varianti indicate con SSA svuotano il sito dell'IRM e portano la memoria a bande dentro l'attenzione del secondo stadio, ricordando la matrice $K^{\top}V$ di ciascun passo. La prima si limita a richiamarla, la seconda aggiunge un confronto antisimmetrico tra le Key del passato e i Value del presente, la terza calcola lo stesso confronto su due proiezioni dedicate. La memoria di consolidamento sostituisce le bande con quattro segmenti che coprono tutto il passato osservato, e ne sposta i bordi fondendo di volta in volta i due segmenti adiacenti più simili. Le bande in tempo di attività, infine, misurano i propri bordi sull'orologio dell'equazione~\eqref{eq:orologio_locale} con $s=1$ e $\gamma=1$, sicché si allungano dove il sensore è silenzioso e si accorciano dove gli eventi abbondano.
 
 \begin{table}[p]
 \centering
@@ -85,27 +87,27 @@ La tabella~\ref{tab:confronti_estesi} confronta ogni variante dei capitoli~\ref{
 \textbf{Variante} & \textbf{$\Delta$F1} & \textbf{Corr./intr.} & \textbf{$p$} & \textbf{$\Delta$F1} & \textbf{Corr./intr.} & \textbf{$p$} \\
 \hline
 % INIZIO confronti (generato da figure_scripts/appendice/tabelle_appendice.py)
-\multicolumn{7}{@{}l}{\emph{Capitolo 5, forme della relazione e controlli}} \\
+\multicolumn{7}{@{}l}{\emph{Capitolo 5, controlli della sezione 5.4}} \\
 \quad Modello di riferimento & $-0{,}6$ & $423/434$ & $0{,}733$ & $-7{,}6$ & $22/54$ & $3{,}1\cdot10^{-4}$ \\
-\quad IRM lineare & $-2{,}8$ & $416/487$ & $0{,}020$ & $-8{,}1$ & $21/55$ & $1{,}2\cdot10^{-4}$ \\
-\quad IRM simmetrico & $-0{,}5$ & $413/417$ & $0{,}917$ & $-3{,}5$ & $28/44$ & $0{,}076$ \\
-\quad IRM con instradamento & $-1{,}1$ & $402/423$ & $0{,}486$ & $-2{,}1$ & $20/30$ & $0{,}203$ \\
 \quad Sito vuoto & $-1{,}3$ & $425/444$ & $0{,}541$ & $-11{,}7$ & $25/74$ & $8{,}5\cdot10^{-7}$ \\
 \quad MLP di pari parametri & $-0{,}7$ & $433/440$ & $0{,}839$ & $-10{,}3$ & $24/69$ & $3{,}3\cdot10^{-6}$ \\
-\quad Relazione a punti & $-0{,}2$ & $421/413$ & $0{,}808$ & $-2{,}9$ & $17/32$ & $0{,}044$ \\
-\quad Gate di contenuto & $-0{,}0$ & $422/413$ & $0{,}782$ & $-3{,}6$ & $25/41$ & $0{,}064$ \\
-\multicolumn{7}{@{}l}{\emph{Capitolo 5, alternative}} \\
-\quad Tracce a decadimento costante & $-2{,}7$ & $403/472$ & $0{,}021$ & $-9{,}2$ & $16/58$ & $9{,}7\cdot10^{-7}$ \\
-\quad Tracce guidate dagli eventi & $-0{,}8$ & $411/428$ & $0{,}581$ & $-2{,}4$ & $21/33$ & $0{,}134$ \\
-\quad Memoria di consolidamento & $-0{,}4$ & $419/418$ & $1{,}000$ & $-4{,}1$ & $14/31$ & $0{,}016$ \\
-\quad Bande e memoria remota & $+0{,}6$ & $431/402$ & $0{,}332$ & $-3{,}2$ & $20/35$ & $0{,}058$ \\
+\quad Bande senza confronto & $-2{,}8$ & $416/487$ & $0{,}020$ & $-8{,}1$ & $21/55$ & $1{,}2\cdot10^{-4}$ \\
+\quad Confronto simmetrico & $-0{,}5$ & $413/417$ & $0{,}917$ & $-3{,}5$ & $28/44$ & $0{,}076$ \\
+\quad Ritardi puntuali & $-0{,}2$ & $421/413$ & $0{,}808$ & $-2{,}9$ & $17/32$ & $0{,}044$ \\
+\quad Tracce a decadimento appreso & $-2{,}7$ & $403/472$ & $0{,}021$ & $-9{,}2$ & $16/58$ & $9{,}7\cdot10^{-7}$ \\
+\quad Tracce guidate dal sensore & $-0{,}8$ & $411/428$ & $0{,}581$ & $-2{,}4$ & $21/33$ & $0{,}134$ \\
+\quad Orologio appreso & $+0{,}9$ & $431/395$ & $0{,}223$ & $-4{,}0$ & $14/31$ & $0{,}016$ \\
+\quad Passato remoto aggiunto & $+0{,}6$ & $431/402$ & $0{,}332$ & $-3{,}2$ & $20/35$ & $0{,}058$ \\
+\multicolumn{7}{@{}l}{\emph{Capitolo 5, altre prove}} \\
+\quad Variante condizionale del mixer a ritardi & $0{,}0$ & $422/413$ & $0{,}782$ & $-3{,}6$ & $25/41$ & $0{,}064$ \\
+\quad IRM con instradamento per contenuto & $-1{,}1$ & $402/423$ & $0{,}486$ & $-2{,}1$ & $20/30$ & $0{,}203$ \\
+\quad IRM nel primo patch embedding & $+0{,}2$ & $432/420$ & $0{,}706$ & $-5{,}5$ & $18/40$ & $0{,}005$ \\
+\quad IRM in entrambi i patch embedding & $+0{,}1$ & $415/401$ & $0{,}649$ & $-2{,}4$ & $20/30$ & $0{,}203$ \\
 \quad SSA, solo richiamo & $-3{,}4$ & $392/478$ & $0{,}004$ & $-12{,}2$ & $20/75$ & $1{,}2\cdot10^{-8}$ \\
 \quad SSA, confronto su Key e Value & $-0{,}9$ & $415/434$ & $0{,}537$ & $-6{,}9$ & $22/51$ & $9{,}1\cdot10^{-4}$ \\
 \quad SSA, proiezioni dedicate & $-2{,}0$ & $398/446$ & $0{,}106$ & $-8{,}7$ & $18/52$ & $5{,}8\cdot10^{-5}$ \\
-\quad Primo patch embedding & $+0{,}2$ & $432/420$ & $0{,}706$ & $-5{,}5$ & $18/40$ & $0{,}005$ \\
-\quad Entrambi i patch embedding & $+0{,}1$ & $415/401$ & $0{,}649$ & $-2{,}4$ & $20/30$ & $0{,}203$ \\
+\quad Memoria di consolidamento & $-0{,}4$ & $419/418$ & $1{,}000$ & $-4{,}1$ & $14/31$ & $0{,}016$ \\
 \quad Bande in tempo di attività & $-0{,}5$ & $409/425$ & $0{,}604$ & $-3{,}1$ & $18/33$ & $0{,}049$ \\
-\quad Orologio appreso & $+0{,}9$ & $431/395$ & $0{,}223$ & $-4{,}0$ & $14/31$ & $0{,}016$ \\
 \multicolumn{7}{@{}l}{\emph{Capitolo 6}} \\
 \quad IRM, 1 milione di parametri & $+4{,}4$ & $502/351$ & $2{,}6\cdot10^{-7}$ & $+3{,}1$ & $38/29$ & $0{,}328$ \\
 \quad IRM, 2 milioni di parametri & $+6{,}5$ & $524/315$ & $5{,}3\cdot10^{-13}$ & $+6{,}4$ & $45/24$ & $0{,}015$ \\
@@ -118,13 +120,13 @@ La tabella~\ref{tab:confronti_estesi} confronta ogni variante dei capitoli~\ref{
 \end{table}
 
 \paragraph{Compressione al variare del rango}
-La tabella~\ref{tab:compressione_estesa} riporta lo sweep di compressione della sezione~\ref{sec:compressione} per ogni rango provato, con l'energia dei pesi conservata, la differenza di Macro-F1 rispetto al modello non compresso valutato nella stessa esecuzione e il costo del sito. Le moltiplicazioni e lo stato del sito sono conteggi analitici per passo.
+La tabella~\ref{tab:compressione_estesa} riporta, per l'IRM antisimmetrico compatto, la compressione della sezione~\ref{sec:compressione} a ogni rango provato, con l'energia dei pesi conservata, la differenza di Macro-F1 di validazione rispetto al modello non compresso valutato nella stessa esecuzione e il costo del sito. L'energia dei pesi è la quota della somma dei quadrati dei valori singolari che la base conserva. Misura quanto fedelmente vengano ricostruite le matrici, non l'accuratezza conservata né l'energia consumata dal calcolo. La tabella~\ref{tab:ranghi_scelti} riporta invece, per ogni modello compresso del capitolo~\ref{chap:scalabilita}, il rango scelto con la regola della sezione, i risparmi e l'accuratezza sul test prima e dopo la compressione.
 
 \begin{table}[ht]
 \centering
 \small
 \renewcommand{\arraystretch}{1.15}
-\caption[Compressione dell'IRM antisimmetrico al variare del rango]{Compressione dell'IRM antisimmetrico al variare del rango $q$ della base condivisa, in sola inferenza. La differenza di Macro-F1 è rispetto al modello non compresso. Moltiplicazioni con accumulo per passo e stato del sito in migliaia di valori persistenti.}
+\caption[Compressione dell'IRM antisimmetrico compatto al variare del rango]{Compressione dell'IRM antisimmetrico compatto al variare del rango $q$ della base condivisa, in sola inferenza. La differenza di Macro-F1 di validazione è rispetto al modello non compresso. Moltiplicazioni con accumulo per passo e stato del sito in migliaia di valori persistenti.}
 \label{tab:compressione_estesa}
 \begin{tabular}{@{}l r r r r r@{}}
 \hline
@@ -134,66 +136,107 @@ La tabella~\ref{tab:compressione_estesa} riporta lo sweep di compressione della 
 % INIZIO compressione (generato da figure_scripts/appendice/tabelle_appendice.py)
 \multicolumn{6}{@{}l}{\emph{DVS-Lip}} \\
 \quad denso & $100{,}0$ & -- & $77\,832$ & $4{,}98$ & $154$ \\
-\quad $q=16$ & $52{,}1$ & $-2{,}7$ & $22\,536$ & $1{,}44$ & $46$ \\
-\quad $q=32$ & $72{,}1$ & $-1{,}4$ & $32\,776$ & $2{,}10$ & $61$ \\
-\quad $q=48$ & $84{,}2$ & $-1{,}0$ & $43\,016$ & $2{,}75$ & $77$ \\
-\quad $q=64$ & $91{,}4$ & $+0{,}6$ & $53\,256$ & $3{,}41$ & $92$ \\
-\quad $q=96$ & $98{,}0$ & $+0{,}2$ & $73\,736$ & $4{,}72$ & $123$ \\
+\quad $q=8$ & $35{,}7$ & $-6{,}6$ & $17\,416$ & $1{,}11$ & $38$ \\
+\quad $q=16$ & $51{,}1$ & $-4{,}2$ & $22\,536$ & $1{,}44$ & $46$ \\
+\quad $q=24$ & $62{,}6$ & $-3{,}6$ & $27\,656$ & $1{,}77$ & $54$ \\
+\quad $q=32$ & $71{,}4$ & $-1{,}9$ & $32\,776$ & $2{,}10$ & $61$ \\
+\quad $q=48$ & $83{,}8$ & $-0{,}8$ & $43\,016$ & $2{,}75$ & $77$ \\
+\quad $q=64$ (scelto) & $91{,}1$ & $-0{,}3$ & $53\,256$ & $3{,}41$ & $92$ \\
+\quad $q=96$ & $97{,}9$ & $-0{,}4$ & $73\,736$ & $4{,}72$ & $123$ \\
 \multicolumn{6}{@{}l}{\emph{THU-EACT-50-CHL}} \\
 \quad denso & $100{,}0$ & -- & $77\,832$ & $29{,}11$ & $1\,376$ \\
 \quad $q=8$ & $69{,}7$ & $-2{,}4$ & $17\,416$ & $6{,}51$ & $344$ \\
-\quad $q=16$ & $83{,}3$ & $-0{,}4$ & $22\,536$ & $8{,}43$ & $413$ \\
-\quad $q=24$ & $89{,}2$ & $+0{,}2$ & $27\,656$ & $10{,}34$ & $482$ \\
-\quad $q=32$ & $92{,}6$ & $+0{,}8$ & $32\,776$ & $12{,}26$ & $551$ \\
-\quad $q=48$ & $96{,}1$ & $-0{,}4$ & $43\,016$ & $16{,}08$ & $688$ \\
-\quad $q=64$ & $97{,}9$ & $-0{,}3$ & $53\,256$ & $19{,}91$ & $826$ \\
+\quad $q=16$ & $83{,}3$ & $-0{,}7$ & $22\,536$ & $8{,}43$ & $413$ \\
+\quad $q=24$ (scelto) & $89{,}2$ & $-0{,}1$ & $27\,656$ & $10{,}34$ & $482$ \\
+\quad $q=32$ & $92{,}6$ & $+0{,}6$ & $32\,776$ & $12{,}26$ & $551$ \\
+\quad $q=48$ & $96{,}1$ & $-0{,}6$ & $43\,016$ & $16{,}08$ & $688$ \\
+\quad $q=64$ & $97{,}9$ & $-0{,}7$ & $53\,256$ & $19{,}91$ & $826$ \\
+\quad $q=96$ & $99{,}5$ & $+0{,}2$ & $73\,736$ & $27{,}57$ & $1\,101$ \\
 % FINE compressione
 \hline
 \end{tabular}
 \end{table}
 
+\begin{table}[ht]
+\centering
+\small
+\renewcommand{\arraystretch}{1.15}
+\caption[Rango scelto e risparmi di ogni modello compresso]{Rango scelto e risparmi di ogni modello compresso del capitolo~\ref{chap:scalabilita}. L'energia è quella dei pesi conservata dalla base. I risparmi sono variazioni percentuali delle moltiplicazioni con accumulo del sito e dell'intera rete e dello stato dell'intera rete. L'ultima colonna riporta l'accuratezza sul test ufficiale prima e dopo la compressione.}
+\label{tab:ranghi_scelti}
+\begin{adjustbox}{max width=\textwidth}
+\begin{tabular}{@{}l r r r r r c@{}}
+\hline
+\textbf{Modello} & \textbf{Rango} & \textbf{Energia} & \textbf{MAC sito} & \textbf{MAC rete} & \textbf{Stato rete} & \textbf{Test} \\
+ & & [\%] & [\%] & [\%] & [\%] & [\%] \\
+\hline
+% INIZIO ranghi (generato da figure_scripts/appendice/tabelle_appendice.py)
+\multicolumn{7}{@{}l}{\emph{THU-EACT-50-CHL}} \\
+\quad IRM, 0,5 M & $24$ & $89{,}2$ & $-64$ & $-9$ & $-15$ & $66{,}0$ $\to$ $66{,}0$ \\
+\quad IRM, 1 M & $32$ & $84{,}7$ & $-70$ & $-9$ & $-16$ & $71{,}9$ $\to$ $70{,}4$ \\
+\quad IRM, 2 M, primo addestramento & $24$ & $75{,}1$ & $-81$ & $-10$ & $-17$ & $75{,}4$ $\to$ $75{,}6$ \\
+\quad IRM, 2 M, secondo addestramento & $24$ & $82{,}8$ & $-81$ & $-10$ & $-17$ & $73{,}7$ $\to$ $74{,}1$ \\
+\quad IRM, 2 M, terzo addestramento & $16$ & $68{,}6$ & $-84$ & $-11$ & $-18$ & $73{,}7$ $\to$ $73{,}0$ \\
+\multicolumn{7}{@{}l}{\emph{DVS-Lip}} \\
+\quad IRM, 0,5 M & $64$ & $91{,}1$ & $-32$ & $-4$ & $-7$ & $50{,}8$ $\to$ $50{,}8$ \\
+\quad IRM, 1 M & $64$ & $82{,}7$ & $-52$ & $-7$ & $-10$ & $54{,}8$ $\to$ $54{,}7$ \\
+\quad IRM, 2 M, primo addestramento & $64$ & $80{,}0$ & $-63$ & $-8$ & $-11$ & $56{,}3$ $\to$ $56{,}5$ \\
+\quad IRM, 2 M, secondo addestramento & $32$ & $59{,}5$ & $-77$ & $-10$ & $-13$ & $55{,}7$ $\to$ $55{,}8$ \\
+\quad IRM, 2 M, terzo addestramento & $48$ & $71{,}6$ & $-70$ & $-9$ & $-12$ & $55{,}4$ $\to$ $54{,}9$ \\
+\quad IRM distillato, 0,5 M, cinque insegnanti & -- & \multicolumn{4}{c}{nessun rango entro la tolleranza} & $55{,}7$ \\
+\quad IRM distillato, 0,5 M, quattro insegnanti & $96$ & $97{,}4$ & $-5$ & $-1$ & $-4$ & $54{,}3$ $\to$ $54{,}4$ \\
+\quad IRM distillato, 1 M & $96$ & $91{,}3$ & $-33$ & $-4$ & $-7$ & $56{,}3$ $\to$ $56{,}3$ \\
+\quad IRM distillato, 2 M, primo addestramento & $128$ & $93{,}4$ & $-34$ & $-4$ & $-7$ & $58{,}5$ $\to$ $58{,}4$ \\
+\quad IRM distillato, 2 M, secondo addestramento & $64$ & $76{,}0$ & $-63$ & $-8$ & $-11$ & $58{,}6$ $\to$ $58{,}1$ \\
+\quad IRM distillato, 2 M, terzo addestramento & $64$ & $75{,}5$ & $-63$ & $-8$ & $-11$ & $58{,}1$ $\to$ $58{,}5$ \\
+% FINE ranghi
+\hline
+\end{tabular}
+\end{adjustbox}
+\end{table}
+
 \paragraph{Coppie di parole simili su DVS-Lip}
-La tabella~\ref{tab:coppie_estese} riporta, per ciascuna delle 25 coppie di parole visivamente simili di DVS-Lip, il numero di campioni di validazione in cui una parola viene scambiata con l'altra della stessa coppia. Le coppie sono ordinate secondo gli scambi dell'IRM antisimmetrico. Il totale coincide con la colonna degli scambi nella coppia della tabella~\ref{tab:gruppi_lip}. Le differenze tra modelli sulla singola coppia sono piccole e vanno lette con cautela, perché ogni coppia conta circa sessanta campioni.
+La tabella~\ref{tab:coppie_estese} riporta, per ciascuna delle 25 coppie di parole visivamente simili di DVS-Lip, il numero di clip del test ufficiale in cui una parola viene scambiata con l'altra della stessa coppia, in entrambi i versi, per i modelli della figura~\ref{fig:confusione_lip}. Per i modelli con due milioni di parametri il valore è la media dei tre addestramenti. Le coppie sono ordinate secondo gli scambi del modello finale, e il totale coincide con gli scambi della figura. Le differenze fra modelli sulla singola coppia sono piccole e vanno lette con cautela, perché ogni coppia conta circa cento clip.
 
 \begin{table}[ht]
 \centering
 \small
 \renewcommand{\arraystretch}{1.1}
-\caption[Scambi dentro le coppie di parole simili di DVS-Lip]{Scambi dentro ciascuna coppia di parole simili di DVS-Lip, sulla validazione di sviluppo, come numero di campioni.}
+\caption[Scambi dentro le coppie di parole simili di DVS-Lip]{Scambi dentro ciascuna coppia di parole simili di DVS-Lip, sul test ufficiale, come numero di clip. Per i modelli con due milioni di parametri, media di tre addestramenti.}
 \label{tab:coppie_estese}
 \begin{adjustbox}{max width=\textwidth}
-\begin{tabular}{@{}l r r r r r@{}}
+\begin{tabular}{@{}l r r r r r r@{}}
 \hline
-\textbf{Coppia} & \textbf{Campioni} & \textbf{Riferimento} & \textbf{IRM} & \textbf{IRM, 2 M} & \textbf{Distillazione} \\
+\textbf{Coppia} & \textbf{Clip} & \textbf{Riferimento} & \textbf{IRM} & \textbf{IRM} & \textbf{IRM, 2 M} & \textbf{IRM, 2 M} \\
+ & & & & \textbf{distillato} & & \textbf{distillato} \\
 \hline
 % INIZIO coppie (generato da figure_scripts/appendice/tabelle_appendice.py)
-\emph{spend} / \emph{spent} & $60$ & $25$ & $30$ & $23$ & $26$ \\
-\emph{price} / \emph{press} & $60$ & $28$ & $27$ & $29$ & $27$ \\
-\emph{heavy} / \emph{having} & $60$ & $22$ & $25$ & $19$ & $22$ \\
-\emph{america} / \emph{american} & $60$ & $23$ & $18$ & $26$ & $17$ \\
-\emph{russia} / \emph{russian} & $59$ & $14$ & $18$ & $11$ & $11$ \\
-\emph{syria} / \emph{syrian} & $60$ & $23$ & $17$ & $21$ & $15$ \\
-\emph{million} / \emph{billion} & $60$ & $21$ & $17$ & $17$ & $14$ \\
-\emph{happen} / \emph{happened} & $60$ & $16$ & $16$ & $22$ & $14$ \\
-\emph{different} / \emph{difference} & $59$ & $11$ & $15$ & $22$ & $14$ \\
-\emph{court} / \emph{called} & $60$ & $5$ & $15$ & $13$ & $10$ \\
-\emph{think} / \emph{thing} & $59$ & $11$ & $14$ & $11$ & $12$ \\
-\emph{these} / \emph{needs} & $60$ & $14$ & $12$ & $7$ & $8$ \\
-\emph{taking} / \emph{taken} & $60$ & $13$ & $12$ & $15$ & $17$ \\
-\emph{around} / \emph{ground} & $60$ & $19$ & $11$ & $8$ & $13$ \\
-\emph{little} / \emph{legal} & $60$ & $6$ & $11$ & $17$ & $11$ \\
-\emph{benefit} / \emph{benefits} & $60$ & $16$ & $10$ & $16$ & $16$ \\
-\emph{missing} / \emph{meeting} & $60$ & $7$ & $10$ & $4$ & $11$ \\
-\emph{worst} / \emph{words} & $60$ & $14$ & $8$ & $13$ & $12$ \\
-\emph{giving} / \emph{evening} & $60$ & $7$ & $7$ & $3$ & $11$ \\
-\emph{challenge} / \emph{change} & $60$ & $6$ & $7$ & $5$ & $6$ \\
-\emph{paying} / \emph{being} & $60$ & $5$ & $7$ & $5$ & $5$ \\
-\emph{election} / \emph{action} & $60$ & $2$ & $6$ & $4$ & $4$ \\
-\emph{number} / \emph{numbers} & $60$ & $6$ & $4$ & $8$ & $3$ \\
-\emph{terms} / \emph{times} & $60$ & $1$ & $3$ & $0$ & $0$ \\
-\emph{allow} / \emph{allowed} & $60$ & $6$ & $2$ & $7$ & $5$ \\
+\emph{price} / \emph{press} & $100$ & $36$ & $39$ & $47$ & $40$ & $39{,}7$ \\
+\emph{spend} / \emph{spent} & $100$ & $26$ & $34$ & $25$ & $35{,}3$ & $36{,}7$ \\
+\emph{benefit} / \emph{benefits} & $99$ & $30$ & $39$ & $31$ & $36$ & $36$ \\
+\emph{heavy} / \emph{having} & $100$ & $30$ & $23$ & $41$ & $29{,}3$ & $33{,}7$ \\
+\emph{happen} / \emph{happened} & $99$ & $28$ & $33$ & $29$ & $31{,}7$ & $33$ \\
+\emph{america} / \emph{american} & $99$ & $29$ & $30$ & $26$ & $24$ & $26{,}7$ \\
+\emph{different} / \emph{difference} & $100$ & $18$ & $20$ & $22$ & $27$ & $26{,}7$ \\
+\emph{million} / \emph{billion} & $100$ & $20$ & $16$ & $19$ & $22$ & $22{,}7$ \\
+\emph{syria} / \emph{syrian} & $99$ & $19$ & $24$ & $32$ & $26{,}3$ & $22{,}7$ \\
+\emph{court} / \emph{called} & $100$ & $25$ & $16$ & $23$ & $22{,}7$ & $22{,}3$ \\
+\emph{russia} / \emph{russian} & $99$ & $20$ & $25$ & $25$ & $12{,}3$ & $21{,}7$ \\
+\emph{giving} / \emph{evening} & $100$ & $24$ & $19$ & $30$ & $18$ & $21{,}3$ \\
+\emph{worst} / \emph{words} & $100$ & $12$ & $17$ & $27$ & $18{,}7$ & $18{,}3$ \\
+\emph{number} / \emph{numbers} & $100$ & $12$ & $11$ & $11$ & $17{,}3$ & $16{,}7$ \\
+\emph{taking} / \emph{taken} & $100$ & $17$ & $21$ & $22$ & $16$ & $15{,}7$ \\
+\emph{little} / \emph{legal} & $100$ & $11$ & $10$ & $14$ & $13{,}3$ & $15$ \\
+\emph{around} / \emph{ground} & $100$ & $15$ & $17$ & $14$ & $15{,}7$ & $14{,}7$ \\
+\emph{these} / \emph{needs} & $100$ & $13$ & $17$ & $15$ & $17{,}3$ & $14{,}7$ \\
+\emph{challenge} / \emph{change} & $99$ & $15$ & $15$ & $16$ & $9$ & $12{,}7$ \\
+\emph{missing} / \emph{meeting} & $100$ & $15$ & $16$ & $9$ & $14{,}7$ & $12{,}3$ \\
+\emph{allow} / \emph{allowed} & $99$ & $10$ & $11$ & $9$ & $12$ & $12$ \\
+\emph{think} / \emph{thing} & $100$ & $4$ & $11$ & $11$ & $9{,}7$ & $9$ \\
+\emph{paying} / \emph{being} & $100$ & $7$ & $10$ & $7$ & $6{,}7$ & $8$ \\
+\emph{terms} / \emph{times} & $100$ & $3$ & $4$ & $7$ & $2{,}3$ & $4$ \\
+\emph{election} / \emph{action} & $100$ & $3$ & $0$ & $3$ & $4$ & $3{,}7$ \\
 \hline
-Totale & $1\,497$ & $321$ & $322$ & $326$ & $304$ \\
+Totale & $2\,493$ & $442$ & $478$ & $515$ & $481{,}3$ & $499{,}7$ \\
 % FINE coppie
 \hline
 \end{tabular}

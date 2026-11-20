@@ -31,3 +31,17 @@ Aggiornamento 2026-11-17 (sezioni 5.5 e 5.7):
   variare del rango della base condivisa (`artifacts/reports/b_minus_compression/rank_sweep.json`).
 - Su DVS-Lip queste tre fonti usano per ora il checkpoint IRM 20261026_112001: da aggiornare con le valutazioni sul
   checkpoint di riferimento 20261112_082513 (le figure mostrano solo differenze, quindi basta rigenerarle).
+
+Aggiornamento 2026-11-19 (capitolo riscritto: 5.3 risultato, 5.4 controlli, 5.5 colli di bottiglia):
+- `fig_uso_memoria.py`: ora produce una sola figura, `cap5_uso_memoria` (2x2: bande spente in validazione, ordine dei
+  passi sul test). Su DVS-Lip legge le valutazioni sul checkpoint di riferimento 20261112_082513, eseguite il 19/11 sui
+  server SMILIES: `artifacts/reports/lip_ref_bands` (validazione) e `artifacts/reports/lip_ref_diagnostics` (test).
+  Le vecchie `cap5_bande_usate` e `cap5_ordine` non sono piu' usate.
+- `fig_controlli.py`: statistiche dei dieci controlli della sezione 5.4 (differenza di Macro-F1 con IC bootstrap
+  appaiato, p di McNemar, accuratezza di training) salvate in `controlli5.json`, e forest plot `cap5_controlli`.
+  Va eseguito prima di `fig_colli_bottiglia.py`.
+- `fig_colli_bottiglia.py`: `cap5_colli_bottiglia`, accuratezza di training contro validazione per i controlli e
+  quota di clip riconosciute da 0-5 varianti del voto.
+- `fig_forme_passato.py`: ridotta a bande e tracce (la memoria di consolidamento non e' piu' nel testo principale).
+- `fig_risultati5.py` (`cap5_risultati`) e `fig_compressione.py` non sono usate dal capitolo 5; la compressione
+  passa al capitolo 6.

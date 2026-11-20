@@ -8,6 +8,7 @@ Uso: python tabelle_appendice.py (dalla cartella figure_scripts/appendice).
 Nota: su DVS-Lip lo sweep usa per ora il checkpoint IRM 20261026_112001 (solo differenze dal proprio denso).
 """
 import json, os, sys
+import numpy as np
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, '..', 'cap6'))
 sys.path.insert(0, os.path.join(HERE, '..', 'cap5'))
@@ -21,6 +22,8 @@ DS = ['dvslip', 'thu_eact_50_chl']
 
 def n(v, d=1, sign=False):
     s = f"{v:+.{d}f}" if sign else f"{v:.{d}f}"
+    if s.lstrip('+-').strip('0.') == '':
+        s = s.lstrip('+-')
     s = s.replace('.', '{,}')
     return f"${s}$"
 
@@ -34,17 +37,18 @@ def pval(p):
 
 # ---- confronti appaiati ---------------------------------------------------------------------------------------
 ROWS = [
-    ('Capitolo 5, forme della relazione e controlli', None),
-    ('Modello di riferimento', 'rif'), ('IRM lineare', 'lineare'), ('IRM simmetrico', 'simmetrico'),
-    ('IRM con instradamento', 'instradato'), ('Sito vuoto', 'vuoto'), ('MLP di pari parametri', 'mlp'),
-    ('Relazione a punti', 'punti'), ('Gate di contenuto', 'gate'),
-    ('Capitolo 5, alternative', None),
-    ('Tracce a decadimento costante', 'traccia_statica'), ('Tracce guidate dagli eventi', 'traccia_sensore'),
-    ('Memoria di consolidamento', 'consolidamento'), ('Bande e memoria remota', 'remota'),
+    ('Capitolo 5, controlli della sezione 5.4', None),
+    ('Modello di riferimento', 'rif'), ('Sito vuoto', 'vuoto'), ('MLP di pari parametri', 'mlp'),
+    ('Bande senza confronto', 'lineare'), ('Confronto simmetrico', 'simmetrico'),
+    ('Ritardi puntuali', 'punti'), ('Tracce a decadimento appreso', 'traccia_statica'),
+    ('Tracce guidate dal sensore', 'traccia_sensore'), ('Orologio appreso', 'orologio'),
+    ('Passato remoto aggiunto', 'remota'),
+    ('Capitolo 5, altre prove', None),
+    ('Variante condizionale del mixer a ritardi', 'gate'), ('IRM con instradamento per contenuto', 'instradato'),
+    ('IRM nel primo patch embedding', 'stadio1'), ('IRM in entrambi i patch embedding', 'stadi12'),
     ('SSA, solo richiamo', 'ssa_lineare'), ('SSA, confronto su Key e Value', 'ssa_condivisa'),
-    ('SSA, proiezioni dedicate', 'ssa_dedicata'), ('Primo patch embedding', 'stadio1'),
-    ('Entrambi i patch embedding', 'stadi12'), ('Bande in tempo di attività', 'attivita'),
-    ('Orologio appreso', 'orologio'),
+    ('SSA, proiezioni dedicate', 'ssa_dedicata'), ('Memoria di consolidamento', 'consolidamento'),
+    ('Bande in tempo di attività', 'attivita'),
     ('Capitolo 6', None),
     ('IRM, 1 milione di parametri', 'irm_1m'), ('IRM, 2 milioni di parametri', 'irm_2m'),
     ('IRM con distillazione', 'kd5'), ('IRM con auto-ensemble', 'irm_se'),
@@ -63,45 +67,71 @@ for lab, key in ROWS:
 open(f'{OUT}/confronti.tex', 'w').write('\n'.join(lines) + '\n')
 
 # ---- compressione -------------------------------------------------------------------------------------------
-sw = json.load(open(f'{REP}/b_minus_compression/rank_sweep.json'))
-POS = {'dvslip': 64, 'thu_eact_50_chl': 374}
+# Dal 2026-11-19: report della valutazione finale (artifacts/reports/b_minus_final_inference), tramite
+# figure_scripts/cap6/compressione6.py; costi per passo dai profili su 32 clip di validazione.
+sys.path.insert(0, os.path.join(HERE, '..', 'cap6'))
+import compressione6 as c6
 lines = []
-for ds, name in [('dvslip', 'DVS-Lip'), ('thu_eact_50_chl', 'THU-EACT-50-CHL')]:
+for ds, name, w in [('dvslip', 'DVS-Lip', 'lip_b'), ('thu_eact_50_chl', 'THU-EACT-50-CHL', 'thu_b')]:
     lines.append(f"\\multicolumn{{6}}{{@{{}}l}}{{\\emph{{{name}}}}} \\\\")
-    dense = sw[f'{ds}/dense']
-    keys = [f'{ds}/dense'] + sorted((k for k in sw if k.startswith(ds + '/q')), key=lambda k: sw[k]['rank'])
-    for k in keys:
-        r = sw[k]
-        q = r.get('rank')
-        lab = 'denso' if k.endswith('dense') else f"$q={q}$"
-        ch = 128 if q is None else q
-        state = 23 if ds != 'dvslip' else 15
-        st = POS[ds] * state * (ch + 32) / 1e3
-        # MAC del sito per passo: (K+1)Cq + (K+2)Cr per posizione (compresso), KC^2 + (K+2)Cr (denso)
-        per_pos = (4 * 128 * 128 if q is None else 5 * 128 * q) + 6 * 128 * 16
-        mac = POS[ds] * per_pos / 1e6
-        en = 100 * (r.get('retained_weight_energy') or 1.0)
-        df = 100 * (r['f1'] - dense['f1'])
-        par = f"{r['params_s2_mixer_all']:,}".replace(',', '\\,')
-        stt = f"{st:,.0f}".replace(',', '\\,')
-        lines.append(f"\\quad {lab} & {n(en, 1)} & {n(df, 1, True) if q else '--'} & ${par}$ & {n(mac, 2)} & ${stt}$ \\\\")
+    rep = c6.load(w); o = c6.worker(w)
+    for arm in ['dense'] + [f'q{k}' for k in o['ranks']]:
+        c = c6.cost(rep['arms'][arm]['profile'])
+        q = None if arm == 'dense' else int(arm[1:])
+        lab = 'denso' if q is None else (f"$q={q}$" + (' (scelto)' if q == o['q'] else ''))
+        en = 100.0 if q is None else o['energy'][q]
+        df = '--' if q is None else n(o['val_curve'][q], 1, True)
+        par = f"{c['module_params']:,}".replace(',', '\\,')
+        stt = f"{c['module_state'] / 1e3:,.0f}".replace(',', '\\,')
+        lines.append(f"\\quad {lab} & {n(en, 1)} & {df} & ${par}$ & {n(c['module_mac'] / 1e6, 2)} & ${stt}$ \\\\")
 open(f'{OUT}/compressione.tex', 'w').write('\n'.join(lines) + '\n')
 
-# ---- coppie di parole simili --------------------------------------------------------------------------------
-MOD = ['rif', 'antisimmetrico', 'irm_2m', 'kd5']
-pairs = {}
-for k in MOD:
-    v = json.load(open(f"{r6.path('dvslip', k)}/summary.json"))['validation']['class_group_accuracies']
-    for p in v['visually_confusable_pair_errors']['pairs']:
-        pairs.setdefault(tuple(p['classes']), {})[k] = (p['within_pair_errors'], p['samples'])
-order = sorted(pairs, key=lambda c: -pairs[c]['antisimmetrico'][0])
+ORD = ['primo', 'secondo', 'terzo']
 lines = []
-for c in order:
-    row = [f"\\emph{{{c[0]}}} / \\emph{{{c[1]}}}", f"${pairs[c]['rif'][1]}$"] + [f"${pairs[c][k][0]}$" for k in MOD]
-    lines.append(' & '.join(row) + ' \\\\')
-tot = [sum(pairs[c][k][0] for c in pairs) for k in MOD]
+for ds, rows in c6.MODELS.items():
+    lines.append(f"\\multicolumn{{7}}{{@{{}}l}}{{\\emph{{{'THU-EACT-50-CHL' if ds != 'dvslip' else 'DVS-Lip'}}}}} \\\\")
+    for lab, size, ws in rows:
+        for i, w in enumerate(ws):
+            o = c6.worker(w)
+            name = f"{lab}, {size.replace(' (4 ins.)', ', quattro insegnanti')}" + (f", {ORD[i]} addestramento" if len(ws) > 1 else '')
+            if lab == 'IRM distillato' and size == '0,5 M':
+                name += ', cinque insegnanti'
+            if o['q'] is None:
+                lines.append(f"\\quad {name} & -- & \\multicolumn{{4}}{{c}}{{nessun rango entro la tolleranza}} & {n(o['test_dense'], 1)} \\\\")
+                continue
+            d, c = o['dense'], o['comp']
+            sv = lambda k: n(-c6.saving(d, c, k), 0)
+            lines.append(f"\\quad {name} & ${o['q']}$ & {n(o['energy'][o['q']], 1)} & {sv('module_mac')} & {sv('mac')} & {sv('state')} & "
+                         f"{n(o['test_dense'], 1)} $\\to$ {n(o['test_comp'], 1)} \\\\")
+open(f'{OUT}/ranghi.tex', 'w').write('\n'.join(lines) + '\n')
+
+# ---- coppie di parole simili --------------------------------------------------------------------------------
+# Dal 2026-11-19: test ufficiale, stessi modelli della figura cap6_confusione_lip (media sugli addestramenti ripetuti).
+import finali6
+Gr = json.load(open('/home/emanuele/Scrivania/Tesi/temporal-event-spiking-research/configs/dvslip_class_groups.json'))
+IDX = {c: i for i, c in enumerate(Gr['classes'])}
+PATHM = [['lip_c0'], ['lip_b'], ['lip_kd5'], ['lip_b_2m', 'lip_b_2m_s43', 'lip_b_2m_s44'],
+         ['lip_kd4_2m', 'lip_kd4_2m_s43', 'lip_kd4_2m_s44']]
+T = {w: finali6.test(w) for ws in PATHM for w in ws}
+lines, rows = [], []
+for a_, b_ in Gr['visually_confusable_pairs']:
+    ia, ib = IDX[a_], IDX[b_]
+    y = T['lip_c0']['target']; n_ = int(np.sum((y == ia) | (y == ib)))
+    vals = []
+    for ws in PATHM:
+        v = []
+        for w in ws:
+            y, p = T[w]['target'], T[w]['pred']
+            v.append(int(np.sum((y == ia) & (p == ib)) + np.sum((y == ib) & (p == ia))))
+        vals.append(float(np.mean(v)))
+    rows.append((a_, b_, n_, vals))
+rows.sort(key=lambda r: -r[3][-1])
+fmt = lambda v: f"${v:.0f}$" if abs(v - round(v)) < 1e-9 else f"${v:.1f}$".replace('.', '{,}')
+for a_, b_, n_, vals in rows:
+    lines.append(' & '.join([f"\\emph{{{a_}}} / \\emph{{{b_}}}", f"${n_}$"] + [fmt(v) for v in vals]) + ' \\\\')
+tot = [sum(r[3][k] for r in rows) for k in range(len(PATHM))]
 lines.append('\\hline')
-lines.append('Totale & $' + f"{sum(pairs[c]['rif'][1] for c in pairs):,}".replace(',', '\\,') + '$ & ' + ' & '.join(f'${t}$' for t in tot) + ' \\\\')
+lines.append('Totale & $' + f"{sum(r[2] for r in rows):,}".replace(',', '\\,') + '$ & ' + ' & '.join(fmt(t) for t in tot) + ' \\\\')
 open(f'{OUT}/coppie.tex', 'w').write('\n'.join(lines) + '\n')
 print('ok', tot)
 
@@ -109,7 +139,7 @@ print('ok', tot)
 import re
 APP = os.path.join(HERE, '..', '..', 'content', 'appendix.tex')
 text = open(APP).read()
-for name in ['confronti', 'compressione', 'coppie']:
+for name in ['confronti', 'compressione', 'ranghi', 'coppie']:
     body = open(f'{OUT}/{name}.tex').read()
     pat = re.compile(r'(% INIZIO ' + name + r'[^\n]*\n).*?(% FINE ' + name + r')', re.S)
     assert pat.search(text), name
