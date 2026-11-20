@@ -46,14 +46,15 @@ La tabella~\ref{tab:iperparametri_moduli} riassume gli iperparametri dei moduli 
 \textbf{Modulo o intervento} & \textbf{Iperparametri} \\
 \hline
 IRM antisimmetrico & quattro bande, $[1,2]$, $[3,4]$, $[5,7]$, $[8,15]$ passi su DVS-Lip e $[1,3]$, $[4,6]$, $[7,11]$, $[12,23]$ su THU-EACT-50-CHL; rango della relazione $r=16$, con $A$ e $B$ condivise dalle bande; $W_k$ e $U_k$ inizialmente nulle; $\alpha_k=\beta_k=0$ nel coefficiente di disponibilità \\
-Compressione & base condivisa dai primi $q$ vettori singolari destri delle $W_k$ impilate, calcolati in doppia precisione; $q=64$ su DVS-Lip e $q=32$ su THU-EACT-50-CHL; nessun riaddestramento \\
+Compressione & base condivisa dai primi $q$ vettori singolari destri delle $W_k$ impilate, calcolati in doppia precisione; $q$ scelto per ciascun modello con la regola della sezione~\ref{sec:compressione} fra 8, 16, 24, 32, 48, 64, 96, 128 e 192; nessun riaddestramento \\
 Tracce & orizzonte iniziale pari al ritardo medio della banda sostituita, $h_k=-\log\bigl(1-1/\bar d_k\bigr)$; $\eta_k\ge0$, inizialmente nullo; normalizzazione per il peso accumulato \\
 Memoria di consolidamento & quattro segmenti; fusione della coppia adiacente che modifica meno la risposta del modulo; coefficiente in funzione del logaritmo dell'età e della durata del segmento \\
 Memoria remota & media del passato più vecchio dell'ultima banda, con proiezioni proprie e $W$, $U$ inizialmente nulle; coefficiente in funzione dell'età media e della durata \\
 Memoria nella SSA & matrici $M_k$ e $G_k$ di $16\times16$ elementi per banda e per testa, otto teste, inizialmente nulle; bande e coefficienti di disponibilità dell'IRM \\
 Orologi locali & attività tipica $\hat a$ pari alla mediana pesata dagli eventi, stimata su 256 campioni di addestramento; tempo di attività con $s=1$ e $\gamma=1$; orologio appreso da $s=1$ e $\gamma=0$, con $s\in[1/4,4]$ e $\gamma\in[-2,2]$ \\
 Capacità & 128, 192 e 256 canali, rango della relazione invariato \\
-Distillazione & cinque insegnanti congelati, temperatura $T=4$, peso $w=0{,}9$ \\
+Relazioni locali & ultimo strato del frontend piramidale, prima del max-pooling, con 32, 48 o 64 canali; proiezione $1\times1$ a 16 componenti con inizializzazione ortogonale; spostamenti orizzontale, verticale e due diagonali; ritardi di 1, 2 e 4 passi; media $3\times3$ con passo 2; una proiezione di uscita per ritardo, inizialmente nulla \\
+Distillazione & quattro insegnanti congelati, cioè IRM con uno e con due milioni di parametri, modello di riferimento con due milioni e IRM compatto con discretizzazione stocastica; bersagli calcolati una sola volta prima dell'addestramento; temperatura $T=4$, peso $w=0{,}9$ \\
 Auto-ensemble & media mobile con momento $0{,}8$, temperatura $T=4$, peso crescente linearmente fino a $0{,}9$, bersaglio usato solo se la sua classe più probabile coincide con l'etichetta \\
 Discretizzazione stocastica & scala dei tempi log-uniforme in $[0{,}9;\,1{,}1]$ e fase della griglia uniforme entro un passo, solo in addestramento \\
 \hline
@@ -111,8 +112,9 @@ Le righe raccolte sotto «altre prove» riguardano varianti che il testo princip
 \multicolumn{7}{@{}l}{\emph{Capitolo 6}} \\
 \quad IRM, 1 milione di parametri & $+4{,}4$ & $502/351$ & $2{,}6\cdot10^{-7}$ & $+3{,}1$ & $38/29$ & $0{,}328$ \\
 \quad IRM, 2 milioni di parametri & $+6{,}5$ & $524/315$ & $5{,}3\cdot10^{-13}$ & $+6{,}4$ & $45/24$ & $0{,}015$ \\
-\quad IRM con distillazione & $+5{,}3$ & $455/287$ & $7{,}4\cdot10^{-10}$ & $-6{,}5$ & $15/39$ & $0{,}001$ \\
+\quad IRM con distillazione & $+3{,}4$ & $442/331$ & $7{,}4\cdot10^{-5}$ & -- & -- & -- \\
 \quad IRM con auto-ensemble & $+1{,}4$ & $411/359$ & $0{,}066$ & $-1{,}6$ & $14/23$ & $0{,}188$ \\
+\quad IRM con relazioni locali prima del pooling & $+1{,}7$ & $472/409$ & $0{,}037$ & $+0{,}5$ & $29/29$ & $1{,}000$ \\
 % FINE confronti
 \hline
 \end{tabular}
@@ -182,61 +184,93 @@ La tabella~\ref{tab:compressione_estesa} riporta, per l'IRM antisimmetrico compa
 \quad IRM, 2 M, primo addestramento & $64$ & $80{,}0$ & $-63$ & $-8$ & $-11$ & $56{,}3$ $\to$ $56{,}5$ \\
 \quad IRM, 2 M, secondo addestramento & $32$ & $59{,}5$ & $-77$ & $-10$ & $-13$ & $55{,}7$ $\to$ $55{,}8$ \\
 \quad IRM, 2 M, terzo addestramento & $48$ & $71{,}6$ & $-70$ & $-9$ & $-12$ & $55{,}4$ $\to$ $54{,}9$ \\
-\quad IRM distillato, 0,5 M, cinque insegnanti & -- & \multicolumn{4}{c}{nessun rango entro la tolleranza} & $55{,}7$ \\
-\quad IRM distillato, 0,5 M, quattro insegnanti & $96$ & $97{,}4$ & $-5$ & $-1$ & $-4$ & $54{,}3$ $\to$ $54{,}4$ \\
+\quad IRM distillato, 0,5 M & $96$ & $97{,}4$ & $-5$ & $-1$ & $-4$ & $54{,}3$ $\to$ $54{,}4$ \\
 \quad IRM distillato, 1 M & $96$ & $91{,}3$ & $-33$ & $-4$ & $-7$ & $56{,}3$ $\to$ $56{,}3$ \\
 \quad IRM distillato, 2 M, primo addestramento & $128$ & $93{,}4$ & $-34$ & $-4$ & $-7$ & $58{,}5$ $\to$ $58{,}4$ \\
 \quad IRM distillato, 2 M, secondo addestramento & $64$ & $76{,}0$ & $-63$ & $-8$ & $-11$ & $58{,}6$ $\to$ $58{,}1$ \\
 \quad IRM distillato, 2 M, terzo addestramento & $64$ & $75{,}5$ & $-63$ & $-8$ & $-11$ & $58{,}1$ $\to$ $58{,}5$ \\
+\quad IRM con relazioni locali, 1 M & $48$ & $75{,}9$ & $-61$ & $-7$ & $-9$ & $56{,}0$ $\to$ $55{,}7$ \\
+\quad IRM con relazioni locali, 2 M & $32$ & $61{,}0$ & $-77$ & $-9$ & $-11$ & $58{,}2$ $\to$ $57{,}3$ \\
+\quad IRM con relazioni locali, distillato, 0,5 M & $96$ & $97{,}5$ & $-5$ & $-1$ & $-3$ & $56{,}8$ $\to$ $56{,}6$ \\
+\quad IRM con relazioni locali, distillato, 1 M & $64$ & $81{,}3$ & $-52$ & $-6$ & $-8$ & $59{,}1$ $\to$ $58{,}7$ \\
+\quad IRM con relazioni locali, distillato, 2 M & $128$ & $93{,}5$ & $-34$ & $-4$ & $-6$ & $60{,}2$ $\to$ $60{,}1$ \\
 % FINE ranghi
 \hline
 \end{tabular}
 \end{adjustbox}
 \end{table}
 
+\titoletto{Relazioni locali alle tre larghezze}
+La tabella~\ref{tab:scan_locali} confronta l'IRM con e senza le relazioni locali prima del pooling della sezione~\ref{sec:relazioni_locali}, con mezzo milione, uno e due milioni di parametri, addestrati in modo standard e con distillazione. È la verifica su cui si basa la regola di adozione del ramo locale.
+
+\begin{table}[ht]
+\centering
+\small
+\renewcommand{\arraystretch}{1.15}
+\caption[Relazioni locali alle tre larghezze]{IRM antisimmetrico e IRM con relazioni locali prima del pooling su DVS-Lip, alle tre larghezze, con e senza distillazione. Accuratezza in percentuale, differenza in punti e valore $p$ del test esatto di McNemar. Con due milioni di parametri il confronto è con il primo dei tre addestramenti dell'IRM.}
+\label{tab:scan_locali}
+\begin{adjustbox}{max width=\textwidth}
+\begin{tabular}{@{}l l r r r r r r r r@{}}
+\hline
+ & & \multicolumn{4}{c}{\textbf{Validazione}} & \multicolumn{4}{c}{\textbf{Test ufficiale}} \\
+\textbf{Budget} & \textbf{Ricetta} & \textbf{IRM} & \textbf{+ locali} & \textbf{Diff.} & $p$ & \textbf{IRM} & \textbf{+ locali} & \textbf{Diff.} & $p$ \\
+\hline
+% INIZIO scan_locali (generato da figure_scripts/appendice/tabelle_appendice.py)
+\quad 0,5 M & standard & $57{,}1$ & $59{,}2$ & $+2{,}1$ & $0{,}037$ & $50{,}8$ & $53{,}4$ & $+2{,}6$ & $4{,}5\cdot10^{-4}$ \\
+ & distillazione & $60{,}8$ & $63{,}1$ & $+2{,}3$ & $0{,}010$ & $54{,}3$ & $56{,}8$ & $+2{,}6$ & $9{,}9\cdot10^{-5}$ \\
+\quad 1 M & standard & $62{,}2$ & $63{,}3$ & $+1{,}2$ & $0{,}214$ & $54{,}8$ & $56{,}0$ & $+1{,}2$ & $0{,}111$ \\
+ & distillazione & $64{,}2$ & $65{,}3$ & $+1{,}1$ & $0{,}199$ & $56{,}3$ & $59{,}1$ & $+2{,}8$ & $3{,}1\cdot10^{-5}$ \\
+\quad 2 M & standard & $64{,}1$ & $65{,}6$ & $+1{,}5$ & $0{,}085$ & $56{,}3$ & $58{,}2$ & $+1{,}9$ & $0{,}007$ \\
+ & distillazione & $67{,}6$ & $67{,}8$ & $+0{,}2$ & $0{,}831$ & $58{,}5$ & $60{,}2$ & $+1{,}7$ & $0{,}005$ \\
+% FINE scan_locali
+\hline
+\end{tabular}
+\end{adjustbox}
+\end{table}
+
 \paragraph{Coppie di parole simili su DVS-Lip}
-La tabella~\ref{tab:coppie_estese} riporta, per ciascuna delle 25 coppie di parole visivamente simili di DVS-Lip, il numero di clip del test ufficiale in cui una parola viene scambiata con l'altra della stessa coppia, in entrambi i versi, per i modelli della figura~\ref{fig:confusione_lip}. Per i modelli con due milioni di parametri il valore è la media dei tre addestramenti. Le coppie sono ordinate secondo gli scambi del modello finale, e il totale coincide con gli scambi della figura. Le differenze fra modelli sulla singola coppia sono piccole e vanno lette con cautela, perché ogni coppia conta circa cento clip.
+La tabella~\ref{tab:coppie_estese} riporta, per ciascuna delle 25 coppie di parole visivamente simili di DVS-Lip, il numero di clip del test ufficiale in cui una parola viene scambiata con l'altra della stessa coppia, in entrambi i versi, per i modelli della figura~\ref{fig:confusione_lip}. Le coppie sono ordinate secondo gli scambi del modello finale, e il totale coincide con gli scambi della figura. Le differenze fra modelli sulla singola coppia sono piccole e vanno lette con cautela, perché ogni coppia conta circa cento clip.
 
 \begin{table}[ht]
 \centering
 \small
 \renewcommand{\arraystretch}{1.1}
-\caption[Scambi dentro le coppie di parole simili di DVS-Lip]{Scambi dentro ciascuna coppia di parole simili di DVS-Lip, sul test ufficiale, come numero di clip. Per i modelli con due milioni di parametri, media di tre addestramenti.}
+\caption[Scambi dentro le coppie di parole simili di DVS-Lip]{Scambi dentro ciascuna coppia di parole simili di DVS-Lip, sul test ufficiale, come numero di clip.}
 \label{tab:coppie_estese}
 \begin{adjustbox}{max width=\textwidth}
-\begin{tabular}{@{}l r r r r r r@{}}
+\begin{tabular}{@{}l r r r r r@{}}
 \hline
-\textbf{Coppia} & \textbf{Clip} & \textbf{Riferimento} & \textbf{IRM} & \textbf{IRM} & \textbf{IRM, 2 M} & \textbf{IRM, 2 M} \\
- & & & & \textbf{distillato} & & \textbf{distillato} \\
+\textbf{Coppia} & \textbf{Clip} & \textbf{Riferimento} & \textbf{IRM e} & \textbf{+ distil-} & \textbf{Modello finale,} \\
+ & & & \textbf{rel. locali} & \textbf{lazione} & \textbf{2 M} \\
 \hline
 % INIZIO coppie (generato da figure_scripts/appendice/tabelle_appendice.py)
-\emph{price} / \emph{press} & $100$ & $36$ & $39$ & $47$ & $40$ & $39{,}7$ \\
-\emph{spend} / \emph{spent} & $100$ & $26$ & $34$ & $25$ & $35{,}3$ & $36{,}7$ \\
-\emph{benefit} / \emph{benefits} & $99$ & $30$ & $39$ & $31$ & $36$ & $36$ \\
-\emph{heavy} / \emph{having} & $100$ & $30$ & $23$ & $41$ & $29{,}3$ & $33{,}7$ \\
-\emph{happen} / \emph{happened} & $99$ & $28$ & $33$ & $29$ & $31{,}7$ & $33$ \\
-\emph{america} / \emph{american} & $99$ & $29$ & $30$ & $26$ & $24$ & $26{,}7$ \\
-\emph{different} / \emph{difference} & $100$ & $18$ & $20$ & $22$ & $27$ & $26{,}7$ \\
-\emph{million} / \emph{billion} & $100$ & $20$ & $16$ & $19$ & $22$ & $22{,}7$ \\
-\emph{syria} / \emph{syrian} & $99$ & $19$ & $24$ & $32$ & $26{,}3$ & $22{,}7$ \\
-\emph{court} / \emph{called} & $100$ & $25$ & $16$ & $23$ & $22{,}7$ & $22{,}3$ \\
-\emph{russia} / \emph{russian} & $99$ & $20$ & $25$ & $25$ & $12{,}3$ & $21{,}7$ \\
-\emph{giving} / \emph{evening} & $100$ & $24$ & $19$ & $30$ & $18$ & $21{,}3$ \\
-\emph{worst} / \emph{words} & $100$ & $12$ & $17$ & $27$ & $18{,}7$ & $18{,}3$ \\
-\emph{number} / \emph{numbers} & $100$ & $12$ & $11$ & $11$ & $17{,}3$ & $16{,}7$ \\
-\emph{taking} / \emph{taken} & $100$ & $17$ & $21$ & $22$ & $16$ & $15{,}7$ \\
-\emph{little} / \emph{legal} & $100$ & $11$ & $10$ & $14$ & $13{,}3$ & $15$ \\
-\emph{around} / \emph{ground} & $100$ & $15$ & $17$ & $14$ & $15{,}7$ & $14{,}7$ \\
-\emph{these} / \emph{needs} & $100$ & $13$ & $17$ & $15$ & $17{,}3$ & $14{,}7$ \\
-\emph{challenge} / \emph{change} & $99$ & $15$ & $15$ & $16$ & $9$ & $12{,}7$ \\
-\emph{missing} / \emph{meeting} & $100$ & $15$ & $16$ & $9$ & $14{,}7$ & $12{,}3$ \\
-\emph{allow} / \emph{allowed} & $99$ & $10$ & $11$ & $9$ & $12$ & $12$ \\
-\emph{think} / \emph{thing} & $100$ & $4$ & $11$ & $11$ & $9{,}7$ & $9$ \\
-\emph{paying} / \emph{being} & $100$ & $7$ & $10$ & $7$ & $6{,}7$ & $8$ \\
-\emph{terms} / \emph{times} & $100$ & $3$ & $4$ & $7$ & $2{,}3$ & $4$ \\
-\emph{election} / \emph{action} & $100$ & $3$ & $0$ & $3$ & $4$ & $3{,}7$ \\
+\emph{price} / \emph{press} & $100$ & $36$ & $47$ & $43$ & $38$ \\
+\emph{happen} / \emph{happened} & $99$ & $28$ & $32$ & $31$ & $36$ \\
+\emph{benefit} / \emph{benefits} & $99$ & $30$ & $36$ & $32$ & $35$ \\
+\emph{america} / \emph{american} & $99$ & $29$ & $25$ & $30$ & $32$ \\
+\emph{russia} / \emph{russian} & $99$ & $20$ & $28$ & $28$ & $30$ \\
+\emph{different} / \emph{difference} & $100$ & $18$ & $29$ & $25$ & $29$ \\
+\emph{heavy} / \emph{having} & $100$ & $30$ & $27$ & $38$ & $27$ \\
+\emph{syria} / \emph{syrian} & $99$ & $19$ & $24$ & $32$ & $27$ \\
+\emph{spend} / \emph{spent} & $100$ & $26$ & $32$ & $34$ & $24$ \\
+\emph{taking} / \emph{taken} & $100$ & $17$ & $21$ & $16$ & $22$ \\
+\emph{around} / \emph{ground} & $100$ & $15$ & $17$ & $19$ & $22$ \\
+\emph{court} / \emph{called} & $100$ & $25$ & $26$ & $21$ & $21$ \\
+\emph{million} / \emph{billion} & $100$ & $20$ & $11$ & $15$ & $21$ \\
+\emph{these} / \emph{needs} & $100$ & $13$ & $19$ & $12$ & $20$ \\
+\emph{giving} / \emph{evening} & $100$ & $24$ & $12$ & $19$ & $17$ \\
+\emph{worst} / \emph{words} & $100$ & $12$ & $21$ & $24$ & $15$ \\
+\emph{number} / \emph{numbers} & $100$ & $12$ & $10$ & $19$ & $12$ \\
+\emph{missing} / \emph{meeting} & $100$ & $15$ & $5$ & $12$ & $12$ \\
+\emph{little} / \emph{legal} & $100$ & $11$ & $13$ & $10$ & $11$ \\
+\emph{allow} / \emph{allowed} & $99$ & $10$ & $9$ & $12$ & $10$ \\
+\emph{paying} / \emph{being} & $100$ & $7$ & $10$ & $4$ & $10$ \\
+\emph{challenge} / \emph{change} & $99$ & $15$ & $16$ & $12$ & $8$ \\
+\emph{think} / \emph{thing} & $100$ & $4$ & $9$ & $8$ & $8$ \\
+\emph{terms} / \emph{times} & $100$ & $3$ & $5$ & $2$ & $2$ \\
+\emph{election} / \emph{action} & $100$ & $3$ & $4$ & $2$ & $2$ \\
 \hline
-Totale & $2\,493$ & $442$ & $478$ & $515$ & $481{,}3$ & $499{,}7$ \\
+Totale & $2\,493$ & $442$ & $488$ & $500$ & $491$ \\
 % FINE coppie
 \hline
 \end{tabular}

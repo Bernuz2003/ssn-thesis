@@ -12,6 +12,8 @@ PARAMS = {
     'lip_c0': 501028, 'lip_b': 513324, 'lip_kd5': 513324, 'lip_kd4_05': 513324,
     'lip_c0_1m': 1114468, 'lip_b_1m': 1132908, 'lip_kd4_1m': 1132908,
     'lip_c0_2m': 1969892, 'lip_b_2m': 1994476, 'lip_kd4_2m': 1994476, 'lip_c0_2m_kd4': 1969892,
+    'lip_prepool': 519980, 'lip_prepool_kd4_05': 519980, 'lip_prepool_1m': 1142892, 'lip_prepool_1m_kd4': 1142892,
+    'lip_prepool_2m': 2007788, 'lip_prepool_2m_kd4': 2007788,
     'thu_c0': 494578, 'thu_b': 506874, 'thu_c0_1m': 1104818, 'thu_b_1m': 1123258,
     'thu_c0_2m': 1957042, 'thu_b_2m': 1981626,
 }

@@ -51,7 +51,8 @@ ROWS = [
     ('Bande in tempo di attività', 'attivita'),
     ('Capitolo 6', None),
     ('IRM, 1 milione di parametri', 'irm_1m'), ('IRM, 2 milioni di parametri', 'irm_2m'),
-    ('IRM con distillazione', 'kd5'), ('IRM con auto-ensemble', 'irm_se'),
+    ('IRM con distillazione', 'kd4'), ('IRM con auto-ensemble', 'irm_se'),
+    ('IRM con relazioni locali prima del pooling', 'prepool'),
 ]
 lines = []
 for lab, key in ROWS:
@@ -60,6 +61,9 @@ for lab, key in ROWS:
         continue
     cells = [f"\\quad {lab}"]
     for ds in DS:
+        if key not in r6.RUN[ds]:          # distillazione: solo DVS-Lip
+            cells += ['--', '--', '--']
+            continue
         x = r6.paired(ds, 'antisimmetrico', key)
         d = r6.metrics(ds, key)['f1'] - r6.metrics(ds, 'antisimmetrico')['f1']
         cells += [n(d, 1, True), f"${x['fixed']}/{x['broken']}$", pval(x['p'])]
@@ -94,8 +98,6 @@ for ds, rows in c6.MODELS.items():
         for i, w in enumerate(ws):
             o = c6.worker(w)
             name = f"{lab}, {size.replace(' (4 ins.)', ', quattro insegnanti')}" + (f", {ORD[i]} addestramento" if len(ws) > 1 else '')
-            if lab == 'IRM distillato' and size == '0,5 M':
-                name += ', cinque insegnanti'
             if o['q'] is None:
                 lines.append(f"\\quad {name} & -- & \\multicolumn{{4}}{{c}}{{nessun rango entro la tolleranza}} & {n(o['test_dense'], 1)} \\\\")
                 continue
@@ -105,13 +107,30 @@ for ds, rows in c6.MODELS.items():
                          f"{n(o['test_dense'], 1)} $\\to$ {n(o['test_comp'], 1)} \\\\")
 open(f'{OUT}/ranghi.tex', 'w').write('\n'.join(lines) + '\n')
 
+# ---- relazioni locali alle tre larghezze ------------------------------------------------------------------------
+# Dal 2026-11-20: IRM contro IRM con relazioni locali, con e senza distillazione, sulla validazione e sul test
+# (logit di b_minus_final_inference; a 2 M l'IRM e' il primo dei tre addestramenti). McNemar esatto.
+import finali6
+SCAN = [('0,5 M', 'standard', 'lip_b', 'lip_prepool'), ('0,5 M', 'distillazione', 'lip_kd4_05', 'lip_prepool_kd4_05'),
+        ('1 M', 'standard', 'lip_b_1m', 'lip_prepool_1m'), ('1 M', 'distillazione', 'lip_kd4_1m', 'lip_prepool_1m_kd4'),
+        ('2 M', 'standard', 'lip_b_2m', 'lip_prepool_2m'), ('2 M', 'distillazione', 'lip_kd4_2m', 'lip_prepool_2m_kd4')]
+lines = []
+for size, rec, a, b in SCAN:
+    cells = [f"\\quad {size}" if rec == 'standard' else '', rec]
+    for part in ('val', 'test'):
+        A, B = finali6.test(a, part=part), finali6.test(b, part=part)
+        ca, cb = A['pred'] == A['target'], B['pred'] == B['target']
+        fx, br = int(np.sum(cb & ~ca)), int(np.sum(ca & ~cb))
+        cells += [n(A['acc'], 1), n(B['acc'], 1), n(B['acc'] - A['acc'], 1, True), pval(c6.mcnemar(fx, br))]
+    lines.append(' & '.join(cells) + ' \\\\')
+open(f'{OUT}/scan_locali.tex', 'w').write('\n'.join(lines) + '\n')
+
 # ---- coppie di parole simili --------------------------------------------------------------------------------
 # Dal 2026-11-19: test ufficiale, stessi modelli della figura cap6_confusione_lip (media sugli addestramenti ripetuti).
 import finali6
 Gr = json.load(open('/home/emanuele/Scrivania/Tesi/temporal-event-spiking-research/configs/dvslip_class_groups.json'))
 IDX = {c: i for i, c in enumerate(Gr['classes'])}
-PATHM = [['lip_c0'], ['lip_b'], ['lip_kd5'], ['lip_b_2m', 'lip_b_2m_s43', 'lip_b_2m_s44'],
-         ['lip_kd4_2m', 'lip_kd4_2m_s43', 'lip_kd4_2m_s44']]
+PATHM = [['lip_c0'], ['lip_prepool'], ['lip_prepool_kd4_05'], ['lip_prepool_2m_kd4']]
 T = {w: finali6.test(w) for ws in PATHM for w in ws}
 lines, rows = [], []
 for a_, b_ in Gr['visually_confusable_pairs']:
@@ -139,7 +158,7 @@ print('ok', tot)
 import re
 APP = os.path.join(HERE, '..', '..', 'content', 'appendix.tex')
 text = open(APP).read()
-for name in ['confronti', 'compressione', 'ranghi', 'coppie']:
+for name in ['confronti', 'compressione', 'ranghi', 'scan_locali', 'coppie']:
     body = open(f'{OUT}/{name}.tex').read()
     pat = re.compile(r'(% INIZIO ' + name + r'[^\n]*\n).*?(% FINE ' + name + r')', re.S)
     assert pat.search(text), name

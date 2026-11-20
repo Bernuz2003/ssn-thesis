@@ -1,7 +1,7 @@
 """Distillazione e auto-ensemble (sezione 6.1): figura cap6_distillazione.
 
 (a) Accuratezza di training (media delle ultime 16 epoche) e Macro-F1 di validazione dell'IRM antisimmetrico compatto,
-    addestrato in modo standard, con auto-ensemble e con distillazione da cinque insegnanti (risultati6.py).
+    addestrato in modo standard, con auto-ensemble e, su DVS-Lip, con distillazione da quattro insegnanti (risultati6.py).
 (b) Concordanza fra addestramenti ripetuti dell'IRM con due milioni di parametri, con e senza distillazione da quattro
     insegnanti, su validazione e test (media sulle coppie; logit di artifacts/reports/b_minus_final_inference).
     Tre addestramenti (tre coppie) in entrambi i casi.
@@ -17,24 +17,29 @@ fig, axes = plt.subplots(1, 2, figsize=(WIDTH, 2.75), gridspec_kw=dict(wspace=0.
 
 # ---- (a) -----------------------------------------------------------------------------------------------------
 ax = axes[0]
-LAB = {'antisimmetrico': 'IRM', 'irm_se': 'auto-ensemble', 'kd5': 'distillazione'}
+LAB = {'antisimmetrico': 'IRM', 'irm_se': 'auto-ensemble', 'kd4': 'distillazione'}
+ARMS = {'dvslip': ('irm_se', 'kd4'), 'thu_eact_50_chl': ('irm_se',)}
 for ds in ('dvslip', 'thu_eact_50_chl'):
-    pts = {k: (train_u16(ds, k), metrics(ds, k)['f1']) for k in LAB}
+    pts = {k: (train_u16(ds, k), metrics(ds, k)['f1']) for k in ('antisimmetrico',) + ARMS[ds]}
     col = DSCOL[ds]
     x0, y0 = pts['antisimmetrico']
-    for k in ('irm_se', 'kd5'):
+    for k in ARMS[ds]:
         x1, y1 = pts[k]
         ax.add_patch(FancyArrowPatch((x0, y0), (x1, y1), arrowstyle='-|>', mutation_scale=8, lw=1.0,
                                      color=tint(col, 0.75) if k == 'irm_se' else col, shrinkA=4, shrinkB=4, zorder=2))
         ax.plot(x1, y1, 'o', ms=5.5, color='white' if k == 'irm_se' else col, mec=col, mew=1.2, zorder=3)
-        dx, ha = (-6, 'right') if ds == 'dvslip' else (6, 'left')
-        ax.annotate(LAB[k], (x1, y1), xytext=(dx, 0), textcoords='offset points', ha=ha, va='center',
+        if (ds, k) == ('dvslip', 'kd4'):
+            dx, dy, ha, va = 0, 6, 'center', 'bottom'   # sopra il punto, per non toccare l'etichetta di THU
+        else:
+            dx, dy, va = (-6, 0, 'center') if ds == 'dvslip' else (6, 0, 'center')
+            ha = 'right' if ds == 'dvslip' else 'left'
+        ax.annotate(LAB[k], (x1, y1), xytext=(dx, dy), textcoords='offset points', ha=ha, va=va,
                     fontsize=6.6, color=INK2)
     ax.plot(x0, y0, '*', ms=9, color=col, mec=INK, mew=0.5, zorder=4, label=DSNAME[ds])
     dx, ha = (-7, 'right') if ds == 'dvslip' else (7, 'left')
     ax.annotate("IRM", (x0, y0), xytext=(dx, 0), textcoords='offset points', ha=ha, va='center',
                 fontsize=6.8, color=INK)
-ax.set_xlim(72, 101); ax.set_ylim(54, 65)
+ax.set_xlim(80, 101); ax.set_ylim(55, 64)
 ax.legend(loc='lower right', fontsize=6.8, frameon=False, handletextpad=0.2, markerscale=0.8)
 ax.set_xlabel(r"accuratezza di training [\%]", fontsize=7.5)
 ax.set_ylabel(r"Macro-F1 di validazione [\%]", fontsize=7.5)

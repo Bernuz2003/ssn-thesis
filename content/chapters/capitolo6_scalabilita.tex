@@ -15,39 +15,44 @@
 % riferimento distillato 57,99/57,50. Appaiati sul test: riferimento -> distillato +2,77 [+1,57; +4,00] p=2e-5; riferimento
 % distillato -> IRM distillato +0,50/+0,58/+0,14, p 0,43/0,36/0,84. Concordanza fra i tre distillati: val 73,0, test 69,8.
 
-Il capitolo precedente si è chiuso con una diagnosi, secondo cui con circa mezzo milione di parametri la stessa architettura incontra su THU-EACT-50-CHL un limite di adattamento, che la memoria relazionale allenta, e su DVS-Lip un limite di varianza, che nessuna memoria sposta. Questo capitolo ne trae le conseguenze, trattando prima ciascun dataset secondo il proprio collo di bottiglia. Su DVS-Lip cerca di ridurre la varianza senza toccare l'architettura, raccogliendo in un solo modello ciò che varianti diverse sanno separatamente, mentre su THU-EACT-50-CHL verifica che la memoria relazionale basti così com'è. Esamina poi due assi comuni ai due dataset, la capacità, che dice come la soluzione cambi quando la rete cresce, e la compressione, che dice quanto della memoria si possa togliere dopo l'addestramento senza perdere accuratezza. Il capitolo si chiude con i modelli finali, con il loro confronto con lo stato dell'arte e con gli errori che restano.
+Il capitolo precedente si è chiuso con una diagnosi, secondo cui con circa mezzo milione di parametri la stessa architettura incontra su THU-EACT-50-CHL un limite di adattamento, che la memoria relazionale allenta, e su DVS-Lip un limite di varianza, che nessuna memoria del secondo patch embedding sposta, insieme al dubbio che su questo dataset una parte dell'informazione si perda prima di raggiungere la memoria. Questo capitolo ne trae le conseguenze, trattando prima ciascun dataset secondo il proprio collo di bottiglia. Su DVS-Lip affianca alla distillazione, che raccoglie in un solo modello ciò che varianti diverse sanno separatamente, un confronto fra passato e presente calcolato prima del pooling, fra celle vicine, mentre su THU-EACT-50-CHL verifica che la memoria relazionale basti così com'è. Esamina poi due assi comuni ai due dataset, la capacità, che dice come la soluzione cambi quando la rete cresce, e la compressione, che dice quanto della memoria si possa togliere dopo l'addestramento senza perdere accuratezza. Il capitolo si chiude con i modelli finali, con il loro confronto con lo stato dell'arte e con gli errori che restano.
 
-Tutte le scelte, comprese quelle sugli insegnanti della distillazione e sul rango della compressione, sono fatte sulla validazione di sviluppo. Il test ufficiale viene valutato a posteriori, sui modelli già scelti e sui loro controlli diretti, e serve a verificare e a confrontare, non a scegliere.
+Tutte le scelte, comprese quelle sugli insegnanti della distillazione, sull'adozione delle relazioni locali e sul rango della compressione, sono fatte sulla validazione di sviluppo. Il test ufficiale viene valutato a posteriori, sui modelli già scelti e sui loro controlli diretti, e serve a verificare e a confrontare, non a scegliere.
 
 
 % ==============================================================================
 %  Ridurre la varianza: la distillazione
 % ==============================================================================
 % Fonti: src/etsr/training/distillation.py (perdita (1-w) CE + w T^2 KL(p_T || softmax(z/T)), p_T media delle
-% distribuzioni temperate degli insegnanti congelati sullo stesso batch dello studente; T=4, w=0,9; studente da zero) e
-% src/etsr/training/self_ensemble.py (media mobile per campione delle proprie predizioni temperate, momento 0,8, peso
-% crescente linearmente fino a 0,9, bersaglio usato solo se la sua classe piu' probabile coincide con l'etichetta).
-% Insegnanti (config dei run kd5): DVS-Lip IRM, IRM nel primo e in entrambi i patch embedding, ritardi puntuali,
-% riferimento; THU IRM, IRM in entrambi i patch embedding, IRM con instradamento, ritardi puntuali, tracce guidate dal
-% sensore. Validazione: risultati6.py (Lip IRM 57,13/57,47, +SE 58,86/58,90, +KD5 62,74/62,76; THU 69,17/62,56,
-% 66,92/60,98, 63,16/56,02; training u16 Lip 98,7/98,0/95,3, THU 83,2/86,6/75,7; appaiati Lip KD 455/287 p=7e-10,
-% SE 411/359 p=0,066; THU KD 15/39 p=0,0015, SE 14/23 p=0,19). Test Lip KD5 55,66/55,04, +4,84 [+3,5; +6,2].
-% Concordanza fra addestramenti dell'IRM 2 M, con e senza distillazione: fig_distillazione.py (65,3/61,2 contro
-% 72,5/69,3). Durate dai run.log: IRM 7,7 h, distillazione da cinque insegnanti 19,3 h (circa 2,5 volte).
+% distribuzioni temperate degli insegnanti congelati; T=4, w=0,9; studente da zero; bersagli precalcolati) e
+% src/etsr/training/self_ensemble.py (media mobile per clip delle proprie predizioni temperate, momento 0,8, con
+% correzione del bias; peso crescente linearmente fino a 0,9; bersaglio letto prima dell'aggiornamento e usato solo
+% dopo il primo passaggio e solo se la sua classe piu' probabile coincide con l'etichetta).
+% Distillazione ufficiale da quattro insegnanti (run VC_RI_M--interval-antisymmetric-r16-kd4__20261119_025813_296654,
+% config dei run kd4): IRM 2 M (val 64,11/63,97), IRM 1 M (62,17/61,82), riferimento 2 M (63,54/63,40), IRM compatto
+% svc (58,50/58,60); scelti sulla validazione fra 14 modelli come il gruppo di quattro con la migliore accuratezza del
+% voto ammorbidito (69,65%). Validazione (risultati6.py): IRM 57,13/57,47, +SE 58,86/58,90, +KD4 60,83/60,91;
+% training u16 DVS-Lip 98,7/98,0/96,5, THU IRM 83,2, SE 86,6; appaiati IRM->KD4 442/331 p=7,4e-5, IRM->SE 411/359
+% p=0,066, SE->KD4 406/347 p=0,034; THU IRM->SE 14/23 p=0,19. Test (finali6.py) IRM 50,81/50,39 -> KD4 54,25/53,77,
+% 701/530 p=1,2e-6, IC bootstrap al 95% [+2,1; +4,8]. Concordanza fra addestramenti dell'IRM 2 M, con e senza
+% distillazione: fig_distillazione.py (65,3/61,2 contro 73,0/69,8). Durata: IRM 7,7 h, KD4 7,9 h (run.log).
+% La distillazione da cinque insegnanti compatti (kd5) non e' piu' presentata (scelta dell'autore del 20/11/2026).
 
 \section{Ridurre la varianza: la distillazione}
 \label{sec:distillazione}
 
-Su DVS-Lip varianti di accuratezza quasi identica riconoscono clip diverse, e il loro voto supera di quasi otto punti ciascuna di esse. La conoscenza che serve, dunque, in buona parte esiste già, ma è sparsa fra modelli diversi. Viene naturale chiedersi se la si possa raccogliere in un solo modello compatto, senza pagare in inferenza il costo di cinque reti.
+Su DVS-Lip varianti di accuratezza quasi identica riconoscono clip diverse, e il loro voto supera di quasi otto punti ciascuna di esse. La conoscenza che serve, dunque, in buona parte esiste già, ma è sparsa fra modelli diversi. Viene naturale chiedersi se la si possa raccogliere in un solo modello compatto, senza pagare in inferenza il costo di più reti.
 
-È il compito della distillazione, che addestra un modello, detto studente, a imitare le predizioni di altri modelli già addestrati, detti insegnanti~\cite{hinton2015distilling}. Gli insegnanti sono qui le cinque varianti compatte del gruppo di confronto della sezione~\ref{sec:colli_bottiglia}, e restano congelati per tutto l'addestramento. A ogni passo ricevono lo stesso batch dello studente, e le loro distribuzioni di probabilità sulle classi, ammorbidite da una temperatura $T$, vengono mediate in un'unica distribuzione $\bar p_T$. Lo studente, che ha l'architettura dell'IRM compatto e parte da pesi casuali, minimizza
+È il compito della distillazione, che addestra un modello, detto studente, a imitare le predizioni di altri modelli già addestrati, detti insegnanti~\cite{hinton2015distilling}. Gli insegnanti sono quattro, scelti sulla validazione di sviluppo fra quattordici modelli già addestrati come il gruppo il cui voto raggiunge l'accuratezza più alta. Sono l'IRM con uno e con due milioni di parametri, che la sezione~\ref{sec:capacita_irm} esaminerà, il modello di riferimento con due milioni di parametri e un IRM compatto addestrato con piccole perturbazioni casuali della scala temporale dell'ingresso. Diversi per dimensione, per architettura e per ricetta, sbagliano clip in parte diverse, e il loro voto riconosce il $69{,}7\%$ delle clip di validazione, oltre cinque punti più del migliore di essi. Le loro distribuzioni di probabilità sulle classi, ammorbidite da una temperatura $T$, vengono calcolate una sola volta prima dell'addestramento e mediate, per ogni clip, in un'unica distribuzione $\bar p_T$. Lo studente, che ha l'architettura dell'IRM compatto e parte da pesi casuali, minimizza
 \begin{equation}
 \label{eq:distillazione}
 \mathcal L=(1-w)\,\mathrm{CE}(z,y)+w\,T^{2}\,\mathrm{KL}\bigl(\bar p_T\,\big\|\,\mathrm{softmax}(z/T)\bigr),
 \end{equation}
-dove $z$ sono i suoi logit, $y$ l'etichetta, CE l'entropia incrociata, KL la divergenza di Kullback-Leibler, $T=4$ e $w=0{,}9$, fissati a priori. Con la temperatura diventano visibili anche le classi a cui gli insegnanti assegnano una probabilità piccola, cioè quali parole o azioni considerino simili a quella corretta. È un'informazione che l'etichetta da sola non contiene.
+dove $z$ sono i suoi logit, $y$ l'etichetta, CE l'entropia incrociata e KL la divergenza di Kullback-Leibler, con $T=4$ e $w=0{,}9$ fissati a priori.
 
-Un bersaglio più morbido dell'etichetta potrebbe però aiutare di per sé, indipendentemente da chi lo fornisce. Per distinguere i due effetti serve un controllo che ammorbidisca i bersagli senza portare informazione da altri modelli, come l'\emph{auto-ensemble}. Per ogni clip di addestramento la rete conserva una media mobile, lungo le epoche, delle proprie predizioni ammorbidite~\cite{laine2017temporal}, e la usa come bersaglio al posto di $\bar p_T$ nell'equazione~\eqref{eq:distillazione}. Il peso del bersaglio cresce linearmente durante l'addestramento fino a $0{,}9$~\cite{kim2021selfknowledge}, e una clip lo usa soltanto quando la classe più probabile della media coincide con l'etichetta, così che la rete non venga spinta verso i propri errori.
+Nella perdita, l'entropia incrociata è il termine dell'addestramento standard, e spinge lo studente a dare la probabilità più alta alla classe corretta, senza dire nulla delle altre. La divergenza di Kullback-Leibler misura invece quanto la distribuzione dello studente si discosti da quella media degli insegnanti, e si annulla soltanto quando le due coincidono. Minimizzarla significa chiedere allo studente di distribuire la propria incertezza come gli insegnanti, cioè di considerare plausibili le stesse parole alternative e nella stessa misura. Il peso $w$ stabilisce quanto conti ciascuna delle due richieste, e con $w=0{,}9$ lo studente impara soprattutto dagli insegnanti, mentre l'etichetta resta un ancoraggio. La temperatura divide i logit prima della softmax e rende le distribuzioni più piatte, così che diventino visibili anche le classi a cui gli insegnanti assegnano una probabilità piccola, cioè le parole che considerano simili a quella corretta. È un'informazione che l'etichetta da sola non contiene. Il fattore $T^2$, infine, compensa il fatto che con distribuzioni più piatte i gradienti del secondo termine si riducono, e mantiene i due termini su scale confrontabili~\cite{hinton2015distilling}.
+
+Un bersaglio più morbido dell'etichetta potrebbe però aiutare di per sé, indipendentemente da chi lo fornisce. Per distinguere i due effetti serve un controllo che ammorbidisca i bersagli senza portare informazione da altri modelli, come l'\emph{auto-ensemble}, nel quale la rete fa da insegnante a sé stessa~\cite{laine2017temporal}. Durante l'addestramento la rete vede ogni clip una volta per epoca, e ogni volta ne produce una distribuzione di probabilità sulle classi, che cambia un po' da un'epoca all'altra man mano che i pesi si aggiornano. Per ogni clip si conserva una media di queste distribuzioni, aggiornata a ogni passaggio, in cui l'ultima predizione pesa per un quinto e quelle precedenti per i restanti quattro quinti, sicché le più vecchie contano sempre meno. La media raccoglie così le risposte delle diverse versioni della rete attraversate durante l'addestramento, è più stabile di ciascuna di esse e prende il posto di $\bar p_T$ nell'equazione~\eqref{eq:distillazione}. Perché la rete non impari dai propri errori, il peso $w$ parte da zero e cresce linearmente fino a $0{,}9$ alla fine dell'addestramento~\cite{kim2021selfknowledge}, quando la media è diventata affidabile, e una clip usa il proprio bersaglio soltanto se la classe più probabile della media coincide con l'etichetta, mentre negli altri casi torna all'addestramento standard. Se il guadagno della distillazione venisse soltanto dal rendere più morbidi i bersagli, l'auto-ensemble dovrebbe ottenerne buona parte.
 
 \begin{table}[t]
 \centering
@@ -63,85 +68,161 @@ Un bersaglio più morbido dell'etichetta potrebbe però aiutare di per sé, indi
 \multicolumn{5}{@{}l}{\emph{DVS-Lip}} \\
 IRM antisimmetrico & $57{,}1$ & $57{,}5$ & $50{,}8$ & $50{,}4$ \\
 \quad con auto-ensemble & $58{,}9$ & $58{,}9$ & -- & -- \\
-\quad con distillazione & $62{,}7^{*}$ & $62{,}8$ & $55{,}7^{*}$ & $55{,}0$ \\
+\quad con distillazione & $60{,}8^{*}$ & $60{,}9$ & $54{,}3^{*}$ & $53{,}8$ \\
 \hline
 \multicolumn{5}{@{}l}{\emph{THU-EACT-50-CHL}} \\
 IRM antisimmetrico & $69{,}2$ & $62{,}6$ & $66{,}0$ & $59{,}6$ \\
 \quad con auto-ensemble & $66{,}9$ & $61{,}0$ & -- & -- \\
-\quad con distillazione & $63{,}2^{*}$ & $56{,}0$ & -- & -- \\
 \hline
 \end{tabular}
 \end{table}
 
 \titoletto{Che cosa cambia su DVS-Lip}
-Su DVS-Lip la distillazione è la leva più forte trovata nel regime compatto (tabella~\ref{tab:addestramento}). Porta l'IRM da $57{,}5$ a $62{,}8$ di Macro-F1 in validazione, correggendo 455 errori e introducendone 287, e sul test ufficiale ne alza l'accuratezza di quasi cinque punti, con un intervallo di confidenza che va da $+3{,}5$ a $+6{,}2$. Lo studente recupera circa due terzi della distanza fra le singole varianti e il loro voto, pur restando un solo modello con il costo in inferenza dell'IRM compatto. Ci arriva adattandosi un po' meno ai dati di addestramento, che riconosce al $95\%$ anziché al $99\%$, e generalizzando molto meglio (figura~\ref{fig:distillazione}a). È il comportamento atteso da un rimedio alla varianza, che rinuncia a un po' di aderenza al training in cambio di una soluzione più stabile.
+Su DVS-Lip la distillazione è la leva più forte trovata nel regime compatto (tabella~\ref{tab:addestramento}). Porta l'IRM da $57{,}5$ a $60{,}9$ di Macro-F1 in validazione, correggendo 442 errori e introducendone 331, e sul test ufficiale ne alza l'accuratezza di quasi tre punti e mezzo, dal $50{,}8$ al $54{,}3\%$, con un intervallo di confidenza che va da $+2{,}1$ a $+4{,}8$ punti. Ci arriva adattandosi un po' meno ai dati di addestramento, che riconosce al $96\%$ anziché al $99\%$, e generalizzando meglio (figura~\ref{fig:distillazione}a). È il comportamento atteso da un rimedio alla varianza, che rinuncia a un po' di aderenza al training in cambio di una soluzione più stabile.
 
-L'auto-ensemble, invece, si ferma a un punto e mezzo, e il confronto appaiato non lo distingue dal caso. Ammorbidire i bersagli non basta, e il grosso del guadagno viene dall'informazione portata da modelli diversi.
+L'auto-ensemble, invece, si ferma a un punto e mezzo, che il confronto appaiato non distingue dal caso, e la distillazione lo supera in modo significativo. Ammorbidire i bersagli non basta, e il grosso del guadagno viene dall'informazione portata da modelli diversi.
 
 \begin{figure}[t]
     \centering
     \includegraphics[width=\textwidth]{images/cap6/cap6_distillazione.pdf}
-    \caption[Effetto della distillazione]{Effetto della distillazione. (a)~Accuratezza di training, media delle ultime 16 epoche, e Macro-F1 di validazione dell'IRM antisimmetrico compatto (stella), addestrato con auto-ensemble (cerchio vuoto) e con distillazione da cinque insegnanti (cerchio pieno). Su DVS-Lip la distillazione riduce l'adattamento al training e alza la validazione, su THU-EACT-50-CHL li riduce entrambi. (b)~Quota delle clip su cui due addestramenti indipendenti dell'IRM con due milioni di parametri danno la stessa risposta, senza e con distillazione, in media sulle tre coppie di tre addestramenti.}
+    \caption[Effetto della distillazione]{Effetto della distillazione. (a)~Accuratezza di training, media delle ultime 16 epoche, e Macro-F1 di validazione dell'IRM antisimmetrico compatto (stella), addestrato con auto-ensemble (cerchio vuoto) e, su DVS-Lip, con distillazione da quattro insegnanti (cerchio pieno). Su DVS-Lip la distillazione riduce l'adattamento al training e alza la validazione, mentre su THU-EACT-50-CHL l'auto-ensemble aumenta l'adattamento senza migliorare la validazione. (b)~Quota delle clip su cui due addestramenti indipendenti dell'IRM con due milioni di parametri danno la stessa risposta, senza e con distillazione, in media sulle tre coppie di tre addestramenti.}
     \label{fig:distillazione}
 \end{figure}
 
-La distillazione riduce proprio la varianza che la sezione~\ref{sec:colli_bottiglia} aveva individuato, e lo si può verificare in modo diretto. Con due milioni di parametri, dove l'addestramento è stato ripetuto (sezione~\ref{sec:capacita_irm}), tre modelli distillati danno in media la stessa risposta sul $73\%$ delle clip di validazione e sul $70\%$ di quelle del test, contro il $65\%$ e il $61\%$ di tre modelli addestrati in modo standard (figura~\ref{fig:distillazione}b). Lo studente non diventa soltanto più accurato. Approda, da un addestramento all'altro, a soluzioni più simili fra loro.
+La distillazione riduce proprio la varianza che la sezione~\ref{sec:colli_bottiglia} aveva individuato, e lo si può verificare in modo diretto. Con due milioni di parametri, dove l'addestramento è stato ripetuto (sezione~\ref{sec:capacita_irm}), tre modelli distillati danno in media la stessa risposta sul $73\%$ delle clip di validazione e sul $70\%$ di quelle del test, contro il $65\%$ e il $61\%$ di tre modelli addestrati in modo standard (figura~\ref{fig:distillazione}b). Lo studente non diventa soltanto più accurato, ma approda, da un addestramento all'altro, a soluzioni più simili fra loro.
 
-In inferenza lo studente è identico all'IRM compatto, e il prezzo si paga durante l'addestramento, per il quale servono cinque insegnanti già addestrati e, a ogni passo, anche il loro calcolo in avanti. Nelle prove svolte l'addestramento dello studente è durato circa due volte e mezzo quello dell'IRM, senza contare quello degli insegnanti.
+In inferenza lo studente è identico all'IRM compatto, e anche il suo addestramento costa quanto quello standard, circa otto ore nelle prove svolte, perché le predizioni degli insegnanti vengono calcolate una sola volta prima di cominciare. Il prezzo sta a monte, negli insegnanti, che vanno addestrati a loro volta e comprendono due modelli più grandi dello studente.
 
-\titoletto{Il controllo su THU-EACT-50-CHL}
-Se la diagnosi è corretta, la stessa ricetta non dovrebbe aiutare THU-EACT-50-CHL, dove il limite è l'adattamento e non la varianza, ed è proprio quello che accade. Con cinque insegnanti compatti dello stesso tipo, la distillazione abbassa la Macro-F1 dell'IRM da $62{,}6$ a $56{,}0$, in modo significativo, e l'auto-ensemble la abbassa di un punto e mezzo. Il risultato è comprensibile, perché lo studente ha già l'architettura del migliore degli insegnanti e il loro voto supera l'IRM di meno di due punti, sicché imitarne la media significa in parte imitarne gli errori. Inoltre una rete che già fatica ad adattarsi ai dati di addestramento, con il bersaglio degli insegnanti vi si adatta ancora meno, e ne riconosce il $76\%$ anziché l'$83\%$ (figura~\ref{fig:distillazione}a).
+\titoletto{THU-EACT-50-CHL}
+Su THU-EACT-50-CHL la diagnosi della sezione~\ref{sec:colli_bottiglia} non indica questa leva, perché i modelli compatti tendono a sbagliare le stesse clip e il voto delle varianti supera la migliore di esse di meno di due punti, sicché c'è poca conoscenza sparsa da raccogliere, mentre il limite è l'adattamento ai dati di addestramento. L'auto-ensemble va nella stessa direzione, perché aumenta l'adattamento al training ma porta la Macro-F1 dell'IRM da $62{,}6$ a $61{,}0$, una differenza che il confronto appaiato non distingue dal caso.
 
-Su THU-EACT-50-CHL, dunque, la memoria relazionale è già la risposta al collo di bottiglia, e la configurazione per questo dataset resta l'IRM antisimmetrico con la ricetta standard. Né la distillazione né l'auto-ensemble lo migliorano, e nessuna delle memorie alternative della sezione~\ref{sec:controlli_irm} supera le bande. La leva che resta è la capacità, che di fronte a un limite di adattamento è anche la più naturale.
+La memoria relazionale è dunque già la risposta al collo di bottiglia di questo dataset, e la configurazione resta l'IRM antisimmetrico con la ricetta standard, che nessuna delle memorie alternative della sezione~\ref{sec:controlli_irm} migliora. La leva che resta è la capacità, che di fronte a un limite di adattamento è anche la più naturale.
 
 
 % ==============================================================================
-%  Capacita'
+%  Il confronto su scala locale, prima del pooling
 % ==============================================================================
-% Fonti: run capacity-1m/2m (embed_dim 192 e 256, rango 16) di IRM e riferimento VC; validazione da risultati6.py e
-% validation_controls_vs_bminus.txt; test da finali6.py. Distillazione da quattro insegnanti (config dei run kd4):
-% IRM 2 M, IRM 1 M, riferimento 2 M, IRM compatto addestrato con VC stocastico (scala temporale log-uniforme in
-% [0,9; 1,1] e fase della griglia casuale, solo in addestramento); scelti sulla validazione fra 14 modelli come il gruppo
-% di quattro con la migliore accuratezza del voto ammorbidito (69,65%); bersagli precalcolati, durata come
-% l'addestramento standard (2 M: 12,9 h contro 13,2 h). Confronti appaiati sul test (documento di struttura, tab. E e F):
-% THU IRM-rif 0,5 M +9,93 (p<0,001), 1 M +3,12 [-0,2; +6,6] (p=0,086), 2 M media tre coppie +1,96 [-0,18; +4,17] acc,
-% +2,17 [+0,25; +4,11] F1, singole coppie +2,02/+2,21/+1,65; validazione 2 M +0,08 acc, +0,37 F1. DVS-Lip IRM-rif 0,5 M
-% +0,80 (p=0,29), 1 M +3,18 [+1,7; +4,6] (p<0,001), 2 M +1,09 (p=0,12, primo addestramento); IRM 2 M - 0,5 M +5,49;
-% distillazione 1 M +1,49 (p=0,029), 2 M +2,19 e +2,91 (p<0,001), media +2,55 [+1,66; +3,46]; KD5 contro KD4 a 0,5 M
-% 55,66 contro 54,25 (p=0,035). Accuratezza di training del riferimento THU: 1 M 98,4%, 2 M 100,0%.
+% Fonti (2026-11-20): docs/RELAZIONI_LOCALI_PRE_POOLING_E_RISULTATI_FINALI_LIP.md del repository di ricerca, numeri
+% ricalcolati dai logit di artifacts/reports/b_minus_final_inference (finali6.py, sezione 6 di quel documento).
+% Modulo: src/etsr/models/local_prepool.py (R[d,delta,t,p] = u[t-d,p] u[t,p+delta] - u[t-d,p+delta] u[t,p], u proiezione
+% 1x1 a rango 16 con init ortogonale, spostamenti (0,1), (1,0), (1,1), (1,-1), ritardi 1, 2, 4, media 3x3 con passo 2,
+% uscita 1x1 per ritardo inizializzata a zero, sommata alla corrente dopo il max pooling; stato = proiezioni degli ultimi
+% 4 passi, 262.144 valori). Sito patch_embed1.main3: 32/48/64 canali a 64x64. Parametri del ramo 6.656/9.984/13.312.
+% Costo a 0,5 M (profilo lip_prepool): MAC 38,42 -> 46,45 M (+20,9%), stato 842 -> 1.104 mila valori (+31%),
+% moltiplicazioni elemento per elemento della relazione locale 1,45 M per passo. Addestramento 9,5 -> 16,7 h (A40).
+% Validazione 0,5 M: IRM 57,13/57,47 -> 59,23/59,20, 472/409 p=0,037; KD4 60,83/60,91 -> 63,11/63,09, 375/307 p=0,010;
+% THU 69,17/62,56 -> 69,17/63,08 (p=1). Test: IRM 50,81/50,39 -> 53,41/52,62, 731/602 p<0,001 [+1,1; +4,0];
+% KD4 54,25/53,77 -> 56,84/56,15, 606/477 p<0,001 [+1,3; +3,8]; KD4 sul modello con relazioni locali +3,44 [+2,1; +4,8].
+% Training u16: 98,7 -> 98,9. Regola di adozione dichiarata prima dello scan; esteso solo su DVS-Lip.
 
-\section{La soluzione al crescere del budget}
-\label{sec:capacita_irm}
+\section{Il confronto su scala locale, prima del pooling}
+\label{sec:relazioni_locali}
 
-Fin qui tutti i modelli avevano circa mezzo milione di parametri, e la prova di questa sezione allarga la rete da 128 a 192 e a 256 canali, come per il modello di riferimento nella sezione~\ref{sec:solidita_riferimento}, e porta i parametri a circa uno e due milioni. Ogni modello è addestrato da zero con la stessa ricetta. Il rango della relazione resta $r=16$, ma il modulo cresce insieme alla rete, perché le matrici $W_k$ crescono con il quadrato del numero di canali e le proiezioni $A$, $B$ e $U_k$ in proporzione a esso. Il termine di confronto è il modello di riferimento della stessa larghezza, addestrato con la stessa rappresentazione a lunghezza variabile. Le versioni più larghe del capitolo~\ref{chap:riallocazione_budget} usano la finestra fissa e non possono fare da controllo. Con due milioni di parametri l'addestramento dell'IRM è stato ripetuto tre volte su entrambi i dataset, e così quello del modello di riferimento su THU-EACT-50-CHL, e i valori sono riportati come media e deviazione standard.
+La distillazione risponde alla varianza, il collo di bottiglia che la sezione~\ref{sec:colli_bottiglia} ha misurato su DVS-Lip, ma lascia aperta la domanda con cui quella sezione si chiudeva, cioè se una parte dell'informazione utile sparisca prima di raggiungere la memoria. L'IRM confronta passato e presente nel secondo patch embedding, su feature che hanno già attraversato diversi pooling e che su DVS-Lip occupano una griglia di $8\times8$ posizioni. Le parole del dataset, però, si distinguono spesso per movimenti piccoli e brevi della bocca, e le coppie più simili differiscono per poco. L'ipotesi è che un confronto calcolato prima del pooling, fra celle vicine e con ritardi brevi, possa conservare proprio quelle transizioni fini che il pooling cancella.
 
-Su DVS-Lip la sezione precedente suggerisce di affiancare alla capacità la distillazione. Per uno studente da uno o due milioni di parametri, però, le varianti compatte sono insegnanti più piccoli dello studente stesso. Si usano allora quattro insegnanti scelti sulla validazione fra quattordici modelli già addestrati, come il gruppo il cui voto sulle probabilità ammorbidite raggiunge l'accuratezza più alta. Sono l'IRM da uno e da due milioni di parametri, il modello di riferimento da due milioni e un IRM compatto addestrato con piccole perturbazioni casuali della scala temporale dell'ingresso. Le loro predizioni vengono calcolate una volta sola prima dell'addestramento, sicché distillare costa quanto addestrare in modo standard. Con lo studente compatto restano preferibili i cinque insegnanti compatti della sezione precedente, che sul test danno $55{,}7\%$ di accuratezza contro $54{,}3\%$, e sono quindi la ricetta del modello compatto, mentre i quattro insegnanti sono quella dei modelli più grandi.
+Se l'ipotesi è corretta, il guadagno dovrebbe comparire su DVS-Lip e non su THU-EACT-50-CHL, dove le azioni si distinguono su distanze di secondi già alla portata dell'IRM, e dovrebbe sommarsi a quello della distillazione, perché agisce su una causa diversa dalla varianza.
+
+\titoletto{Un correlatore fra celle vicine}
+La variante aggiunge un ramo all'ultimo strato del frontend piramidale che lavora a risoluzione piena, su una griglia di $64\times64$ celle con 32 canali nel modello compatto, subito prima del pooling che la dimezza. Una proiezione appresa riduce la corrente $x_t$ di ogni cella a $r=16$ componenti, $u_t=L\,x_t$. Per ogni coppia di celle vicine $p$ e $p+\delta$, lungo quattro direzioni, orizzontale, verticale e le due diagonali, e per tre ritardi brevi $d\in\{1,2,4\}$ passi, il ramo calcola
+\begin{equation}
+\label{eq:relazione_locale}
+R_{d,\delta,t}(p)=u_{t-d}(p)\odot u_t(p+\delta)-u_{t-d}(p+\delta)\odot u_t(p).
+\end{equation}
+È il correlatore dell'equazione~\eqref{eq:reichardt} quasi alla lettera, con due celle vicine dell'immagine al posto dei due recettori e un ritardo di pochi passi, da $27$ a $110\,\mathrm{ms}$ su DVS-Lip, sicché il segno della risposta indica in quale verso qualcosa si è spostato da una cella all'altra (figura~\ref{fig:relazioni_locali}). Le relazioni vengono poi mediate su piccoli gruppi di celle, per portarle alla risoluzione dopo il pooling, e riportate nei canali da una matrice appresa per ciascun ritardo, inizializzata a zero, che le somma alla corrente come una correzione prima del neurone. All'inizializzazione il ramo non contribuisce, e la rete parte di nuovo dalla funzione dell'IRM, che resta al suo posto nel secondo patch embedding insieme al mixer a ritardi del primo. Come per l'IRM, nulla obbliga i canali appresi a diventare rilevatori di movimento.
+
+Le due relazioni si completano, perché l'IRM osserva come cambia una stessa regione nell'arco di centinaia di millisecondi, mentre il ramo locale osserva in quale direzione si sposta un dettaglio fra regioni vicine nell'arco di poche decine. Anche la forma del passato è diversa, con medie di banda nel primo caso e istanti precisi nel secondo, e un'unica proiezione letta in due celle al posto delle due proiezioni $A$ e $B$.
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=\textwidth]{images/cap6/cap6_relazioni_locali.pdf}
+    \caption[Relazioni locali prima del pooling]{Due scale del confronto fra passato e presente. (a)~L'IRM, nel secondo patch embedding, confronta in ogni posizione della mappa di $8\times8$ il presente con il passato della stessa posizione, riassunto in quattro bande fino a $411\,\mathrm{ms}$ su DVS-Lip. (b)~Il ramo delle relazioni locali, nell'ultimo strato del frontend piramidale, confronta sulla mappa di $64\times64$ la proiezione di una cella con quella di ciascuna delle quattro vicine, con ritardi di 1, 2 e 4 passi, sottraendo il prodotto speculare come nel correlatore di Hassenstein e Reichardt. Le relazioni vengono mediate alla risoluzione dopo il pooling e sommate alla corrente.}
+    \label{fig:relazioni_locali}
+\end{figure}
+
+Il ramo aggiunge appena $6\,656$ parametri su circa mezzo milione, ma la sua memoria conserva le proiezioni a 16 componenti degli ultimi quattro passi per ciascuna delle $4\,096$ celle della griglia, cioè $262\,144$ valori, quasi un terzo in più dello stato dell'intera rete compatta. Aggiunge inoltre circa otto milioni di moltiplicazioni con accumulo per passo, un quinto in più della rete, e l'addestramento richiede quasi il doppio del tempo. È lo stesso fenomeno incontrato nel capitolo~\ref{chap:riallocazione_budget}, in cui un modulo con pochi pesi costa molto se opera dove le posizioni sono tante.
 
 \begin{table}[t]
 \centering
 \small
 \renewcommand{\arraystretch}{1.2}
-\caption[Modelli al crescere della larghezza]{Modello di riferimento, IRM antisimmetrico e IRM distillato al crescere della larghezza. Macro-F1 di validazione e accuratezza sul test ufficiale, in percentuale. I parametri sono quelli su DVS-Lip, su THU-EACT-50-CHL sono di poco inferiori. Con 256 canali, media e deviazione standard di tre addestramenti, salvo i due modelli di riferimento su DVS-Lip, addestrati una volta sola.}
+\caption[Relazioni locali prima del pooling, circa mezzo milione di parametri]{Relazioni locali prima del pooling, con circa mezzo milione di parametri. Valori in percentuale. L'asterisco indica una differenza di accuratezza significativa nel confronto appaiato con lo stesso modello senza relazioni locali. Su THU-EACT-50-CHL la variante è stata valutata soltanto sulla validazione.}
+\label{tab:relazioni_locali}
+\begin{tabular}{@{}l r r r r@{}}
+\hline
+ & \multicolumn{2}{c}{\textbf{Validazione}} & \multicolumn{2}{c}{\textbf{Test ufficiale}} \\
+\textbf{Modello} & \textbf{Accuratezza} & \textbf{Macro-F1} & \textbf{Accuratezza} & \textbf{Macro-F1} \\
+\hline
+\multicolumn{5}{@{}l}{\emph{DVS-Lip}} \\
+IRM antisimmetrico & $57{,}1$ & $57{,}5$ & $50{,}8$ & $50{,}4$ \\
+\quad con relazioni locali & $59{,}2^{*}$ & $59{,}2$ & $53{,}4^{*}$ & $52{,}6$ \\
+\quad con distillazione & $60{,}8$ & $60{,}9$ & $54{,}3$ & $53{,}8$ \\
+\quad con relazioni locali e distillazione & $63{,}1^{*}$ & $63{,}1$ & $56{,}8^{*}$ & $56{,}2$ \\
+\hline
+\multicolumn{5}{@{}l}{\emph{THU-EACT-50-CHL}} \\
+IRM antisimmetrico & $69{,}2$ & $62{,}6$ & $66{,}0$ & $59{,}6$ \\
+\quad con relazioni locali & $69{,}2$ & $63{,}1$ & -- & -- \\
+\hline
+\end{tabular}
+\end{table}
+
+\titoletto{Il risultato con mezzo milione di parametri}
+Su DVS-Lip il ramo migliora l'IRM di due punti di accuratezza in validazione e di due e mezzo sul test ufficiale, in entrambi i casi in modo significativo (tabella~\ref{tab:relazioni_locali}). Sul test corregge 731 errori dell'IRM e ne introduce 602, e il guadagno arriva senza che la rete si adatti meglio ai dati di addestramento, che riconosceva già al $99\%$, sicché riguarda la generalizzazione. Su THU-EACT-50-CHL, invece, l'accuratezza di validazione resta identica. Il contrasto fra i due dataset è coerente con l'ipotesi del dettaglio fine, se le azioni di THU-EACT-50-CHL dipendono soprattutto da movimenti ampi e da distanze di secondi, già alla portata dell'IRM, mentre la lettura labiale dipende anche da transizioni locali di poche decine di millisecondi. Come mostrerà la sezione~\ref{sec:errori}, il guadagno non viene però dagli scambi fra le parole più simili.
+
+Anche la seconda previsione è rispettata, perché con gli stessi quattro insegnanti il modello con relazioni locali guadagna sul test quasi tre punti e mezzo, quanto l'IRM, e il ramo locale aggiunge al modello distillato due punti e mezzo, quanto all'IRM addestrato in modo standard. Le due leve si sommano quindi quasi per intero, come ci si aspetta da interventi su cause diverse, e insieme portano il modello compatto dal $50{,}8$ al $56{,}8\%$ sul test, sei punti in più con quasi gli stessi parametri.
+
+La decisione di estendere il ramo ai modelli più grandi è stata presa sulla sola validazione del modello compatto, con una regola fissata in anticipo. Le relazioni locali sarebbero entrate nella configurazione finale di DVS-Lip soltanto se avessero migliorato l'IRM in validazione con lo stesso segno anche con uno e due milioni di parametri, con e senza distillazione. La regola è soddisfatta, perché il guadagno è positivo in tutti e sei i casi, sebbene si riduca al crescere della capacità e, presi singolarmente, siano significativi soltanto i due casi compatti. Sul test, quattro volte più grande della validazione, il guadagno è positivo in tutti e sei i casi e significativo in cinque (appendice~\ref{app:tabelle_estese}). Su THU-EACT-50-CHL, dove il modello compatto non ne trae alcun vantaggio, la variante non è stata estesa. Nelle sezioni che seguono, quindi, la variante di riferimento per DVS-Lip è l'IRM con relazioni locali, addestrato in modo standard e con distillazione, come per THU-EACT-50-CHL lo è l'IRM.
+
+
+% ==============================================================================
+%  Capacita'
+% ==============================================================================
+% Fonti: run capacity-1m/2m (embed_dim 192 e 256, rango 16) di IRM e riferimento VC e run delle relazioni locali
+% (local-prepool, capacity-1m/2m, con e senza kd4); validazione dai summary.json, test da finali6.py. Distillazione da
+% quattro insegnanti a ogni larghezza (sezione 6.1). Confronti appaiati sul test: THU IRM-rif 0,5 M +9,93 (p<0,001),
+% 1 M +3,12 [-0,2; +6,6] (p=0,086), 2 M media tre coppie +1,96 [-0,18; +4,17] acc, +2,17 [+0,25; +4,11] F1; validazione
+% 2 M +0,08 acc, +0,37 F1. DVS-Lip rif -> IRM e relazioni locali: test +3,40 / +4,34 / +2,99 (p<0,001 a ogni larghezza);
+% validazione +2,47 / +3,07 / +2,10 (p 0,013 / 0,001 / 0,017). Distillazione sul modello con relazioni locali, test:
+% +3,44 / +3,10 / +2,01 (p<0,001 / <0,001 / 0,002). Riferimento 2 M: 55,22 -> 57,99 con distillazione (+2,77, p<0,001);
+% riferimento distillato -> IRM e relazioni locali distillato: test +2,23 [+1,1; +3,3] p<0,001, validazione +1,84
+% (p=0,021); IRM distillato 2 M contro riferimento distillato: +0,50 (p=0,43). Validazione Macro-F1 DVS-Lip: riferimento
+% 56,85/60,17/63,40, rif. distillato 2 M 66,07; IRM e rel. locali 59,20/63,22/65,56; distillato 63,09/65,34/67,82.
+% Accuratezza di training del riferimento THU: 1 M 98,4%, 2 M 100,0%.
+
+\section{La soluzione al crescere del budget}
+\label{sec:capacita_irm}
+
+Fin qui tutti i modelli avevano circa mezzo milione di parametri, e la prova di questa sezione allarga la rete da 128 a 192 e a 256 canali, come per il modello di riferimento nella sezione~\ref{sec:solidita_riferimento}, e porta i parametri a circa uno e due milioni. Ogni modello è addestrato da zero con la stessa ricetta. Il rango della relazione resta $r=16$, ma il modulo cresce insieme alla rete, perché le matrici $W_k$ crescono con il quadrato del numero di canali e le proiezioni $A$, $B$ e $U_k$ in proporzione a esso. Il termine di confronto è il modello di riferimento della stessa larghezza, addestrato con la stessa rappresentazione a lunghezza variabile, dato che le versioni più larghe del capitolo~\ref{chap:riallocazione_budget} usano la finestra fissa e non possono fare da controllo.
+
+Per ciascun dataset la sezione segue soltanto la variante emersa come migliore nel regime compatto, cioè l'IRM su THU-EACT-50-CHL e l'IRM con relazioni locali su DVS-Lip, quest'ultimo addestrato sia in modo standard sia con la distillazione, con gli stessi quattro insegnanti a ogni larghezza. Il ramo locale cresce con i canali del frontend, da 32 a 48 e a 64, ma resta sotto i $14\,000$ parametri. Con due milioni di parametri l'addestramento dell'IRM e del modello di riferimento su THU-EACT-50-CHL è stato ripetuto tre volte, e i valori sono la media dei tre.
+
+\begin{table}[t]
+\centering
+\small
+\renewcommand{\arraystretch}{1.15}
+\caption[Modelli al crescere della larghezza]{Modello di riferimento e variante migliore di ciascun dataset al crescere della larghezza. Macro-F1 di validazione e accuratezza sul test ufficiale, in percentuale. Su THU-EACT-50-CHL con 256 canali, media di tre addestramenti.}
 \label{tab:capacita_irm}
-\setlength{\tabcolsep}{4.5pt}
-\begin{tabular}{@{}l r r r r r@{}}
+\begin{tabular}{@{}l l r r r@{}}
 \hline
- & & \multicolumn{2}{c}{\textbf{DVS-Lip}} & \multicolumn{2}{c}{\textbf{THU-EACT-50-CHL}} \\
-\textbf{Modello} & \textbf{Parametri} & \textbf{Valid.} & \textbf{Test} & \textbf{Valid.} & \textbf{Test} \\
+\textbf{Canali} & \textbf{Modello} & \textbf{Parametri} & \textbf{Valid.} & \textbf{Test} \\
 \hline
-\multicolumn{6}{@{}l}{\emph{128 canali}} \\
-\quad riferimento & $0{,}50$\,M & $56{,}9$ & $50{,}0$ & $54{,}9$ & $56{,}1$ \\
-\quad IRM & $0{,}51$\,M & $57{,}5$ & $50{,}8$ & $62{,}6$ & $66{,}0$ \\
-\quad IRM distillato & $0{,}51$\,M & $62{,}8$ & $55{,}7$ & & \\
-\multicolumn{6}{@{}l}{\emph{192 canali}} \\
-\quad riferimento & $1{,}11$\,M & $60{,}2$ & $51{,}6$ & $64{,}9$ & $68{,}8$ \\
-\quad IRM & $1{,}13$\,M & $61{,}8$ & $54{,}8$ & $65{,}6$ & $71{,}9$ \\
-\quad IRM distillato & $1{,}13$\,M & $64{,}3$ & $56{,}3$ & & \\
-\multicolumn{6}{@{}l}{\emph{256 canali}} \\
-\quad riferimento & $1{,}97$\,M & $63{,}4$ & $55{,}2$ & $68{,}0\pm1{,}8$ & $72{,}3\pm0{,}9$ \\
-\quad IRM & $1{,}99$\,M & $64{,}0\pm0{,}9$ & $55{,}8\pm0{,}5$ & $67{,}7\pm1{,}5$ & $74{,}3\pm1{,}0$ \\
-\quad IRM distillato & $1{,}99$\,M & $67{,}1\pm0{,}6$ & $58{,}4\pm0{,}2$ & & \\
-\quad riferimento distillato & $1{,}97$\,M & $66{,}1$ & $58{,}0$ & & \\
+\multicolumn{5}{@{}l}{\emph{DVS-Lip}} \\
+\quad 128 & riferimento & $0{,}50$\,M & $56{,}9$ & $50{,}0$ \\
+ & IRM e relazioni locali & $0{,}52$\,M & $59{,}2$ & $53{,}4$ \\
+ & \quad distillato & $0{,}52$\,M & $63{,}1$ & $56{,}8$ \\
+\quad 192 & riferimento & $1{,}11$\,M & $60{,}2$ & $51{,}6$ \\
+ & IRM e relazioni locali & $1{,}14$\,M & $63{,}2$ & $56{,}0$ \\
+ & \quad distillato & $1{,}14$\,M & $65{,}3$ & $59{,}1$ \\
+\quad 256 & riferimento & $1{,}97$\,M & $63{,}4$ & $55{,}2$ \\
+ & \quad distillato & $1{,}97$\,M & $66{,}1$ & $58{,}0$ \\
+ & IRM e relazioni locali & $2{,}01$\,M & $65{,}6$ & $58{,}2$ \\
+ & \quad distillato & $2{,}01$\,M & $67{,}8$ & $60{,}2$ \\
+\multicolumn{5}{@{}l}{\emph{THU-EACT-50-CHL}} \\
+\quad 128 & riferimento & $0{,}49$\,M & $54{,}9$ & $56{,}1$ \\
+ & IRM & $0{,}51$\,M & $62{,}6$ & $66{,}0$ \\
+\quad 192 & riferimento & $1{,}10$\,M & $64{,}9$ & $68{,}8$ \\
+ & IRM & $1{,}12$\,M & $65{,}6$ & $71{,}9$ \\
+\quad 256 & riferimento & $1{,}96$\,M & $68{,}0$ & $72{,}3$ \\
+ & IRM & $1{,}98$\,M & $67{,}7$ & $74{,}3$ \\
 \hline
 \end{tabular}
 \end{table}
@@ -149,7 +230,7 @@ Su DVS-Lip la sezione precedente suggerisce di affiancare alla capacità la dist
 \begin{figure}[t]
     \centering
     \includegraphics[width=\textwidth]{images/cap6/cap6_capacita.pdf}
-    \caption[Accuratezza sul test al crescere dei parametri]{Accuratezza sul test ufficiale al crescere dei parametri, in scala logaritmica. Con due milioni di parametri, media e deviazione standard degli addestramenti ripetuti. I numeri indicano il margine dell'IRM antisimmetrico sul modello di riferimento della stessa larghezza, in punti. Su DVS-Lip la distillazione usa cinque insegnanti compatti per il modello da mezzo milione di parametri e quattro insegnanti per i modelli più grandi, e la stella vuota indica il modello di riferimento distillato con gli stessi quattro insegnanti, disegnato poco a sinistra della sua posizione per non coprire l'IRM distillato.}
+    \caption[Accuratezza sul test al crescere dei parametri]{Accuratezza sul test ufficiale al crescere dei parametri, in scala logaritmica, per il modello di riferimento e per la variante migliore di ciascun dataset, l'IRM con relazioni locali su DVS-Lip, anche distillato, e l'IRM su THU-EACT-50-CHL. Su THU-EACT-50-CHL con due milioni di parametri, media degli addestramenti ripetuti. I numeri indicano il margine della variante addestrata in modo standard sul modello di riferimento della stessa larghezza, in punti. La stella vuota indica il modello di riferimento con due milioni di parametri distillato con gli stessi quattro insegnanti, disegnato poco a sinistra della sua posizione.}
     \label{fig:capacita}
 \end{figure}
 
@@ -159,41 +240,55 @@ Entrambe le architetture migliorano con il budget (tabella~\ref{tab:capacita_irm
 Il quadro è coerente con la diagnosi, perché con abbastanza capacità anche il modello di riferimento riesce ad adattarsi ai dati di addestramento, che a un milione di parametri riconosce già al $98\%$, e la differenza nel modo di rappresentare il tempo pesa meno. La memoria relazionale conta soprattutto dove il budget è scarso, che è proprio il regime per cui questa tesi l'ha pensata. Un milione di parametri, d'altra parte, è anche la soglia oltre la quale, sul test, la rete con l'IRM supera i metodi pubblicati che non usano dati esterni, mentre il modello di riferimento della stessa larghezza resta sotto (sezione~\ref{sec:configurazioni_finali}).
 
 \titoletto{DVS-Lip}
-Su DVS-Lip la capacità sposta il risultato più di qualunque memoria, e dal modello compatto a quello con due milioni di parametri l'IRM guadagna cinque punti e mezzo di accuratezza sul test. A ogni larghezza resta davanti al modello di riferimento, ma con un margine variabile, piccolo con mezzo milione e con due milioni di parametri, netto e significativo soltanto con un milione, dove vale tre punti.
+Su DVS-Lip la capacità sposta il risultato più di qualunque altra leva, e il modello con relazioni locali passa sul test dal $53{,}4\%$ con mezzo milione di parametri al $58{,}2\%$ con due milioni (tabella~\ref{tab:capacita_irm}). A ogni larghezza resta davanti al modello di riferimento, di tre o quattro punti sul test e sempre in modo significativo (figura~\ref{fig:capacita}), e a differenza di quanto accade su THU-EACT-50-CHL il margine non si riduce in modo sistematico, come se la capacità non bastasse a recuperare da sola l'informazione che il ramo aggiunge.
 
-La distillazione si somma alla capacità, e aggiunge sul test un punto e mezzo a un milione di parametri e più di due punti e mezzo a due milioni, con guadagni significativi in tutti gli addestramenti ripetuti, anche se più piccoli dei quasi cinque punti del modello compatto. Il modello migliore su DVS-Lip è così l'IRM con due milioni di parametri e distillazione, che arriva in media al $58{,}4\%$ sul test, con tre addestramenti che differiscono di pochi decimi. Lo stesso guadagno, però, va anche al modello di riferimento, che con gli stessi quattro insegnanti passa dal $55{,}2$ al $58{,}0\%$. A parità di ricetta l'IRM distillato resta davanti di meno di mezzo punto, e nessuno dei tre confronti appaiati distingue questa differenza dal caso. Su DVS-Lip, dunque, il risultato finale si deve soprattutto alla capacità e alla distillazione, e la memoria relazionale vi contribuisce poco, come già nel regime compatto. Per avere un'idea di quanto valga la ricetta basta notare che il modello compatto distillato, con $55{,}7\%$, raggiunge sul test l'IRM da due milioni di parametri addestrato in modo standard, con un quarto dei parametri.
+La distillazione si somma alla capacità, con tre punti in più sul test a un milione di parametri e due a due milioni, e il modello migliore su DVS-Lip diventa l'IRM con relazioni locali e distillazione con due milioni di parametri. Arriva al $60{,}2\%$ sul test e al $67{,}8\%$ di Macro-F1 in validazione, i valori più alti ottenuti su questo dataset in entrambe le partizioni. La distillazione, però, aiuta allo stesso modo anche il modello di riferimento, che con gli stessi insegnanti passa dal $55{,}2$ al $58{,}0\%$, e il confronto a parità di ricetta va fatto quindi fra i due modelli distillati. Anche così le relazioni locali restano avanti di oltre due punti sul test, in modo significativo, mentre l'IRM distillato senza ramo locale, con due milioni di parametri, non si distingue più dal riferimento distillato. Su DVS-Lip il vantaggio sul modello di riferimento viene dunque soprattutto dal confronto locale calcolato prima del pooling, più che dalla memoria del secondo patch embedding.
 
 
 % ==============================================================================
 %  Compressione dopo l'addestramento
 % ==============================================================================
-% Fonti (2026-11-19): figure_scripts/cap6/compressione6.py sui report di artifacts/reports/b_minus_final_inference
+% Fonti (2026-11-20): figure_scripts/cap6/compressione6.py sui report di artifacts/reports/b_minus_final_inference
 % (sola inferenza; rango scelto sulla validazione con la regola del manifest, tolleranza 0,5 punti di Macro-F1; costi per
 % passo su 32 clip di validazione, funzione cost() di notebooks/b_minus_thesis.py; stato in valori da 32 bit).
-% Ranghi scelti: THU 24 / 32 / 24, 24, 16; DVS-Lip 64 / 64 / 64, 32, 48; distillati DVS-Lip: cinque insegnanti nessuno
-% (migliore q48, -0,71), quattro insegnanti 0,5 M q96, 1 M q96, 2 M q128, 64, 64. Test denso -> compresso, nessuna
-% differenza significativa: THU 65,99->65,99, 71,88->70,40 (p=0,17), 2 M media 74,26->74,20; DVS-Lip 50,81->50,79,
-% 54,81->54,73, 2 M media 55,79->55,74. Risparmi del sito (MAC): THU -64,5 / -70,4 / -80,7..-84,3%; DVS-Lip -31,6 /
-% -51,9 / -62,9..-77,1%; rete: MAC THU -8,6..-10,8%, DVS-Lip -4,1..-9,6%; stato THU -14,9..-17,6%, DVS-Lip -7,3..-13,0%.
-% Moltiplicazioni elemento per elemento della relazione, a 0,5 M: circa 41 mila (DVS-Lip) e 239 mila (THU) per passo.
+% Modelli finali. THU (IRM): q24 / q32 / q24, 24, 16; sito MAC 29,11->10,34, 62,04->18,38, 107,23->20,68 M (mixer 24,51,
+% 55,15, 98,04); stato 1.376->482, 1.927->551, 2.477->482 mila (mixer 1.101, 1.652, 2.202); rete MAC 219,3->200,6,
+% 479,7->436,1, 840,6->754,0 (riferimento 214,7, 472,8, 831,4); stato rete 5.996->5.102, 8.857->7.480, 11.717->9.722
+% (riferimento 5.721, 8.582, 11.442); test 65,99->65,99, 71,88->70,40 (p=0,17), media 74,26->74,20.
+% DVS-Lip (IRM con relazioni locali e distillazione; si comprime solo l'IRM): q96 / q64 / q128; sito MAC 4,98->4,72,
+% 10,62->5,11, 18,35->12,06 (mixer 4,19, 9,44, 16,78); stato 153,6->122,9, 215,0->92,2, 276,5->153,6 mila (mixer 122,9,
+% 184,3, 245,8); rete MAC 46,45->46,19, 96,02->90,52, 163,16->156,87 (riferimento 37,63, 82,80, 145,52); stato rete
+% 1.104->1.073, 1.509->1.386, 1.915->1.792 (riferimento 811, 1.217, 1.622); test 56,84->56,56 (p=0,26), 59,08->58,67
+% (p=0,23), 60,22->60,10 (p=0,63). Senza distillazione: 1 M q48, 2 M q32 con perdita significativa 58,21->57,29 (p=0,021).
+% Moltiplicazioni elemento per elemento: relazione dell'IRM circa 41 mila (DVS-Lip) e 239 mila (THU) per passo; ramo locale
+% 1,45 M per passo a 0,5 M (local_prepool_relation_multiply).
 % Figura: figure_scripts/cap6/fig_compressione.py.
 
 \section{Comprimere la memoria}
 \label{sec:compressione}
 
-Nella forma descritta finora l'IRM antisimmetrico costa un po' più del mixer a ritardi che sostituisce, con il $2{,}5\%$ di parametri in più nell'intera rete compatta e un quarto di stato in più nel suo sito (sezione~\ref{sec:relazione}). Quando la rete si allarga, inoltre, il sito cresce più in fretta del resto, perché le matrici $W_k$ crescono con il quadrato dei canali. Questa sezione mostra che il costo si può ridurre dopo l'addestramento, senza riaddestrare la rete, fino a scendere sotto quello del mixer a ritardi a ogni larghezza.
+Nella forma descritta finora l'IRM antisimmetrico costa un po' più del mixer a ritardi che sostituisce, con il $2{,}5\%$ di parametri in più nell'intera rete compatta e un quarto di stato in più nel suo sito (sezione~\ref{sec:relazione}). Quando la rete si allarga, inoltre, il sito cresce più in fretta del resto, perché le matrici $W_k$ crescono con il quadrato dei canali. Questa sezione mostra che il costo si può ridurre dopo l'addestramento, senza riaddestrare la rete, fino a scendere quasi sempre sotto quello del mixer a ritardi. Su DVS-Lip la compressione riguarda soltanto l'IRM del secondo patch embedding, mentre il ramo locale resta denso, e i risultati che seguono si riferiscono ai modelli finali dei due dataset.
 
 \titoletto{Una base comune per le quattro bande}
-La maggior parte dei parametri e delle moltiplicazioni del modulo sta nelle quattro matrici $W_k$, di $C\times C$ elementi, che riportano nei canali i riassunti delle bande. Le matrici sono apprese separatamente, ma leggono tutte lo stesso segnale, la corrente del secondo patch embedding, ed è plausibile che usino in buona parte le stesse direzioni dello spazio dei canali. In tal caso basta un numero ridotto di direzioni comuni per descriverle tutte.
+La maggior parte dei parametri e delle moltiplicazioni del modulo sta nelle quattro matrici $W_k$, di $C\times C$ elementi, che riportano nei canali i riassunti delle bande. Ciascuna legge un riassunto di $C$ valori, ma non è detto che le servano davvero tutte le $C$ direzioni dello spazio dei canali. Le quattro matrici, inoltre, sono apprese separatamente ma leggono lo stesso segnale, cioè medie diverse della stessa corrente del secondo patch embedding, ed è plausibile che guardino in buona parte le stesse combinazioni di canali. In tal caso basta un numero ridotto $q$ di direzioni comuni per descriverle tutte (figura~\ref{fig:base_comune}a).
 
-Per trovarle si impilano le quattro matrici una sopra l'altra e se ne calcola la decomposizione ai valori singolari. Le $q$ direzioni più importanti dello spazio dei canali, cioè i primi $q$ vettori singolari destri, formano una base condivisa $P\in\mathbb R^{q\times C}$, e ogni matrice viene sostituita dalla sua approssimazione in quella base,
+Per trovarle si impilano le quattro matrici una sopra l'altra, in un'unica matrice di $4C$ righe e $C$ colonne, e se ne calcola la decomposizione ai valori singolari, che ordina le direzioni dello spazio dei canali secondo quanto pesano nell'insieme delle quattro matrici. Le prime $q$, cioè i primi $q$ vettori singolari destri, formano una base condivisa $P\in\mathbb R^{q\times C}$, e ogni matrice viene sostituita dalla sua approssimazione in quella base,
 \begin{equation}
 \label{eq:base_condivisa}
 W_k\approx D_k\,P,
 \qquad
 D_k=W_k\,P^{\top}\in\mathbb R^{C\times q}.
 \end{equation}
-Poiché la media di banda e la proiezione sono entrambe lineari, il loro ordine si può scambiare, e $W_k\,m_{k,t}\approx D_k\,\overline{(Pz)}_{k,t}$, dove la barra indica la media nella banda. Basta allora proiettare la corrente presente una sola volta, nel momento in cui la si scrive nella memoria, e conservare $Pz$, di $q$ valori, al posto di $z$, che ne ha $C$. Il ramo relazionale non cambia, e le proiezioni $Az$ e $Bz$ restano quelle addestrate. Il rango $r=16$ della relazione, del resto, non va confuso con il rango $q$ della base. Il resto della rete resta identico, e la compressione non richiede alcun addestramento.
+In pratica ogni banda smette di leggere il proprio riassunto canale per canale e ne legge soltanto le $q$ componenti lungo le direzioni comuni, che la matrice $D_k$, propria di ciascuna banda, riporta poi in tutti i $C$ canali.
+
+Poiché la media di banda e la proiezione sono entrambe lineari, il loro ordine si può scambiare, e $W_k\,m_{k,t}\approx D_k\,\overline{(Pz)}_{k,t}$, dove la barra indica la media nella banda. Anziché conservare la corrente di ogni passo e proiettarne poi le medie, basta allora proiettarla una sola volta, nel momento in cui entra in memoria, e conservare $Pz$, di $q$ valori, al posto di $z$, che ne ha $C$, ed è da qui che viene il risparmio più consistente (figura~\ref{fig:base_comune}b). Le medie di banda si calcolano sulle proiezioni, come prima sulle correnti, e le matrici $D_k$ le riportano nei canali. Il ramo relazionale non cambia, e le proiezioni $Az$ e $Bz$ restano quelle addestrate, con il loro rango $r=16$, da non confondere con il rango $q$ della base. Il resto della rete resta identico, e la compressione non richiede alcun addestramento, ma soltanto un calcolo sui pesi già appresi.
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=\textwidth]{images/cap6/cap6_base_comune.pdf}
+    \caption[Compressione dell'IRM con una base comune]{Compressione dell'IRM antisimmetrico con una base comune. (a)~Le quattro matrici $W_k$, impilate, si approssimano con una base $P$ di $q$ direzioni dei canali, comune a tutte le bande, e con una matrice $D_k$ per ciascuna banda. (b)~Che cosa conserva la memoria del sito in ogni posizione. L'IRM denso conserva la corrente di ciascuno degli ultimi $d_K$ passi, di $C$ valori, e ne trasforma le medie con $W_k$. L'IRM compresso proietta la corrente con $P$ una sola volta per passo e conserva soltanto le sue $q$ componenti, che $D_k$ riporta nei canali dopo la media. Le altezze delle colonne sono in scala per $C=128$ e $q=64$. Il ramo del confronto non cambia ed è omesso.}
+    \label{fig:base_comune}
+\end{figure}
 
 \titoletto{Una regola fissata in anticipo}
 Resta da scegliere $q$, e la scelta va fatta senza guardare il test. La regola, fissata prima di qualunque valutazione e applicata allo stesso modo a tutti i modelli, prende il rango più piccolo, fra 8, 16, 24, 32, 48, 64, 96, 128 e 192, con cui la Macro-F1 di validazione perde al massimo mezzo punto rispetto al modello non compresso. Se nessun rango soddisfa la regola, il modello non viene compresso. Il test ufficiale serve soltanto a verificare a posteriori che la compressione non abbia tolto nulla. Poiché il rango viene scelto sulla stessa validazione su cui si misura la tolleranza, i piccoli guadagni che a volte vi compaiono non vanno letti come un beneficio della compressione.
@@ -201,111 +296,65 @@ Resta da scegliere $q$, e la scelta va fatta senza guardare il test. La regola, 
 \begin{figure}[t]
     \centering
     \includegraphics[width=\textwidth]{images/cap6/cap6_compressione.pdf}
-    \caption[Compressione dell'IRM dopo l'addestramento]{Compressione dell'IRM antisimmetrico dopo l'addestramento, senza riaddestramento. (a)~Differenza di Macro-F1 di validazione rispetto al modello non compresso al variare del rango $q$ della base condivisa. La banda grigia indica la tolleranza di mezzo punto, i cerchi grandi i ranghi scelti. Con due milioni di parametri è mostrato il primo dei tre addestramenti. (b)~Moltiplicazioni con accumulo per passo nel sito del secondo patch embedding, per il mixer a ritardi del modello di riferimento e per l'IRM, prima e dopo la compressione.}
+    \caption[Accuratezza dell'IRM compresso al variare del rango]{Accuratezza dell'IRM antisimmetrico compresso dopo l'addestramento, senza riaddestramento. Differenza di Macro-F1 di validazione rispetto al modello non compresso al variare del rango $q$ della base comune, per i modelli finali, cioè l'IRM su THU-EACT-50-CHL e l'IRM con relazioni locali e distillazione su DVS-Lip, di cui si comprime soltanto l'IRM. La banda grigia indica la tolleranza di mezzo punto, i cerchi grandi i ranghi scelti. Su THU-EACT-50-CHL con due milioni di parametri è mostrato il primo dei tre addestramenti.}
     \label{fig:compressione}
 \end{figure}
 
 \titoletto{Quanto si può togliere}
-Su THU-EACT-50-CHL le matrici sono fortemente ridondanti, e bastano 24 direzioni su 128 nel modello compatto, e da 16 a 24 su 256 in quello da due milioni di parametri, mentre su DVS-Lip ne servono 64, e da 32 a 64 con due milioni di parametri (figura~\ref{fig:compressione}a). Le quattro bande di DVS-Lip sembrano usare direzioni più diverse fra loro. Il rango scelto, inoltre, cambia da un addestramento all'altro della stessa architettura, e dipende quindi dal singolo modello più che dal dataset.
+Su THU-EACT-50-CHL le matrici sono fortemente ridondanti, e bastano 24 direzioni su 128 nel modello compatto, 32 su 192 con un milione di parametri e da 16 a 24 su 256 con due milioni. Su DVS-Lip, dove i modelli finali sono distillati, ne servono 96 su 128 nel modello compatto, 64 su 192 con un milione di parametri e 128 su 256 con due milioni (figura~\ref{fig:compressione}). I modelli distillati richiedono ranghi più alti di quelli addestrati in modo standard, che con la stessa architettura si accontentano di 48 direzioni su 192 e di 32 su 256 (appendice~\ref{app:tabelle_estese}). Una spiegazione compatibile è che la distillazione distribuisca l'informazione su più direzioni delle matrici $W_k$, ma la prova non basta a dimostrarlo. Il rango scelto, inoltre, cambia da un addestramento all'altro della stessa architettura, e dipende quindi dal singolo modello più che dal dataset.
 
-Il risparmio cresce con la larghezza, perché il rango necessario cresce molto più lentamente del numero di canali. Su THU-EACT-50-CHL le moltiplicazioni del sito si riducono del $65\%$ nel modello compatto, del $70\%$ con un milione di parametri e di oltre l'$80\%$ con due, e lo stato del sito in misura simile (figura~\ref{fig:compressione}b). Su DVS-Lip la riduzione va dal $32\%$ del modello compatto a valori fra il $63$ e il $77\%$ con due milioni di parametri. Sull'intera rete il risparmio è più piccolo, perché il sito ne è soltanto una parte, e vale fra il 4 e l'$11\%$ delle moltiplicazioni e fra il 7 e il $18\%$ dello stato.
+Il rango necessario cresce molto più lentamente del numero di canali, e per questo il risparmio tende a crescere con la larghezza. Le quattro matrici dense richiedono un numero di moltiplicazioni proporzionale a $C^2$, la versione compressa uno proporzionale a $C\,q$, e lo stato da conservare passa da $C$ a $q$ valori per posizione e per passo. Su THU-EACT-50-CHL, con due milioni di parametri, il primo addestramento sceglie lo stesso rango del modello compatto, 24, sebbene i canali siano raddoppiati, e il suo sito compresso conserva esattamente lo stesso stato.
 
-La compressione, d'altra parte, non costa accuratezza, e sul test nessuna differenza fra modello compresso e non compresso è significativa. La più ampia è una perdita di un punto e mezzo su THU-EACT-50-CHL con un milione di parametri, che il confronto appaiato non distingue dal caso, e con due milioni di parametri la media dei tre addestramenti passa dal $74{,}26$ al $74{,}20\%$.
+La figura~\ref{fig:compressione_costi} riporta il costo del sito del secondo patch embedding, in moltiplicazioni con accumulo per passo e in valori da conservare, per il mixer a ritardi del modello di riferimento, per l'IRM denso e per l'IRM compresso. Su THU-EACT-50-CHL la compressione riduce le moltiplicazioni del sito del $65\%$ nel modello compatto, del $70\%$ con un milione di parametri e di oltre l'$80\%$ con due, e lo stato in misura quasi identica, fra il 65 e l'$83\%$. Su DVS-Lip, con i ranghi più alti dei modelli distillati, la riduzione è più contenuta, e vale per le moltiplicazioni il $5\%$ nel modello compatto, il $52\%$ con un milione di parametri e il $34\%$ con due, per lo stato il 20, il 57 e il $44\%$.
 
-\titoletto{Meno costosa del mixer che sostituisce}
-La tabella~\ref{tab:compressione} mette a confronto, a ogni larghezza, il modello di riferimento con la rete che porta l'IRM compresso. Il secondo ha meno parametri, meno moltiplicazioni e meno stato nel sito, e quindi anche nell'intera rete, su entrambi i dataset e a ogni budget, ed è più accurato sul test in ogni caso. Su THU-EACT-50-CHL, con due milioni di parametri, il sito compresso esegue un quinto delle moltiplicazioni del mixer a ritardi e conserva un quinto del suo stato. Le moltiplicazioni elemento per elemento della relazione, non incluse nel conteggio, sono circa un millesimo di quelle con accumulo dell'intera rete. Il confronto fra passato e presente, insomma, non richiede un budget più grande, ma un uso diverso dello stesso budget, nello spirito della riallocazione del capitolo~\ref{chap:riallocazione_budget}.
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=\textwidth]{images/cap6/cap6_compressione_costi.pdf}
+    \caption[Costo del sito prima e dopo la compressione]{Costo del sito del secondo patch embedding per il mixer a ritardi del modello di riferimento e per l'IRM antisimmetrico dei modelli finali, denso e compresso al rango scelto, alle tre larghezze. Su DVS-Lip l'IRM è quello del modello con relazioni locali e distillazione, il cui ramo locale non appartiene al sito. (a)~Moltiplicazioni con accumulo per passo, in milioni. (b)~Stato persistente, in migliaia di valori. Su THU-EACT-50-CHL con due milioni di parametri è mostrato il primo dei tre addestramenti. Le scale verticali dei due dataset sono diverse.}
+    \label{fig:compressione_costi}
+\end{figure}
+
+Ancora più importante è il confronto con il mixer a ritardi che l'IRM sostituisce, perché da denso l'IRM costa più del mixer a ogni larghezza, fra il 9 e il $19\%$ di moltiplicazioni in più e fra il 12 e il $25\%$ di stato in più, dato che alle quattro matrici aggiunge il ramo del confronto e conserva nel buffer anche le proiezioni $Az$ e $Bz$. Su THU-EACT-50-CHL l'IRM compresso costa invece sempre meno del mixer, con il $42\%$ delle sue moltiplicazioni nel modello compatto e appena il $21\%$ con due milioni di parametri, e rispettivamente il 44 e il $22\%$ del suo stato. Su DVS-Lip il modello compatto, che richiede il rango 96, conserva nel sito lo stesso stato del mixer ed esegue ancora circa un ottavo di moltiplicazioni in più, mentre con uno e due milioni di parametri il sito compresso esegue il 54 e il $72\%$ delle moltiplicazioni del mixer e ne conserva il 50 e il $63\%$ dello stato.
+
+Sull'intera rete il risparmio della compressione è più piccolo, perché il sito ne è soltanto una parte, e vale fra lo $0{,}6$ e l'$11\%$ delle moltiplicazioni e fra il 3 e il $18\%$ dello stato. In valori assoluti, però, conta, e con due milioni di parametri su THU-EACT-50-CHL lo stato del sito passa da circa due milioni e mezzo di valori, quasi $10\,\mathrm{MB}$ in precisione singola, a meno di mezzo milione, meno di $2\,\mathrm{MB}$, una differenza che pesa in un'implementazione su FPGA, dove la memoria disponibile sul chip è una delle risorse più scarse.
+
+La compressione, d'altra parte, non costa accuratezza ai modelli finali, e sul test nessuna differenza fra modello compresso e non compresso è significativa. La più ampia è una perdita di un punto e mezzo su THU-EACT-50-CHL con un milione di parametri, che il confronto appaiato non distingue dal caso, mentre su DVS-Lip il modello finale con due milioni di parametri passa dal $60{,}22$ al $60{,}10\%$. Fra tutti i modelli compressi nel corso del lavoro un solo caso perde in modo significativo, l'IRM con relazioni locali da due milioni di parametri addestrato senza distillazione, che con il rango 32 scende di quasi un punto sul test. La regola si basa sulla validazione e non può garantire il test, e il caso va tenuto presente.
+
+\titoletto{Il costo dei modelli finali}
+La tabella~\ref{tab:compressione} riassume il confronto a ogni larghezza fra il modello di riferimento e il modello finale compresso. Su THU-EACT-50-CHL il secondo ha meno parametri, meno moltiplicazioni e meno stato, nel sito e nell'intera rete, a ogni budget, ed è più accurato sul test in ogni caso. Il confronto fra passato e presente, su questo dataset, non richiede un budget più grande ma un uso diverso dello stesso budget, nello spirito della riallocazione del capitolo~\ref{chap:riallocazione_budget}.
+
+Su DVS-Lip, invece, il ramo locale si paga, e se l'IRM compresso costa meno del mixer a ritardi con uno e due milioni di parametri, l'intera rete esegue fra l'8 e il $23\%$ di moltiplicazioni in più del modello di riferimento e conserva fra l'11 e il $32\%$ di stato in più, con l'aumento maggiore nel modello compatto, dove il ramo pesa di più rispetto al resto della rete. In cambio guadagna sul test fra i cinque e i sette punti. Le moltiplicazioni elemento per elemento della relazione dell'IRM, non incluse nel conteggio, restano circa un millesimo di quelle con accumulo, mentre quelle del ramo locale, circa un milione e mezzo per passo nel modello compatto, ne sono il $3\%$.
 
 \begin{table}[t]
 \centering
 \small
-\renewcommand{\arraystretch}{1.2}
-\caption[Modello di riferimento e IRM compresso a ogni larghezza]{Modello di riferimento e rete con l'IRM compresso a ogni larghezza. Parametri dell'intera rete, moltiplicazioni con accumulo per passo e stato persistente del sito del secondo patch embedding, accuratezza sul test ufficiale. Con due milioni di parametri il rango varia fra i tre addestramenti, i costi sono quelli del rango più grande e l'accuratezza è la media dei tre. Il modello di riferimento su DVS-Lip con due milioni di parametri è stato addestrato una volta sola.}
+\renewcommand{\arraystretch}{1.15}
+\caption[Modello di riferimento e modello finale compresso a ogni larghezza]{Modello di riferimento e modello finale compresso a ogni larghezza, cioè l'IRM su THU-EACT-50-CHL e l'IRM con relazioni locali e distillazione su DVS-Lip. Parametri, moltiplicazioni con accumulo per passo e stato persistente del sito del secondo patch embedding e dell'intera rete, accuratezza sul test ufficiale. Su DVS-Lip il ramo locale resta denso e pesa soltanto sui costi dell'intera rete. Su THU-EACT-50-CHL con due milioni di parametri il rango varia fra i tre addestramenti, i costi sono quelli del rango più grande e l'accuratezza è la media dei tre.}
 \label{tab:compressione}
 \begin{adjustbox}{max width=\textwidth}
-\begin{tabular}{@{}l r r r r c r r r r@{}}
+\begin{tabular}{@{}l l c r r r r r r@{}}
 \hline
- & \multicolumn{4}{c}{\textbf{Modello di riferimento}} & \multicolumn{5}{c}{\textbf{IRM compresso}} \\
-\textbf{Budget} & \textbf{Parametri} & \textbf{MAC} & \textbf{Stato} & \textbf{Test} & \textbf{Rango} & \textbf{Parametri} & \textbf{MAC} & \textbf{Stato} & \textbf{Test} \\
- & & [M] & [migliaia] & [\%] & & & [M] & [migliaia] & [\%] \\
+ & & & & \multicolumn{2}{c}{\textbf{Sito}} & \multicolumn{2}{c}{\textbf{Intera rete}} & \\
+\textbf{Budget} & \textbf{Modello} & \textbf{Rango} & \textbf{Parametri} & \textbf{MAC [M]} & \textbf{Stato [mila]} & \textbf{MAC [M]} & \textbf{Stato [mila]} & \textbf{Test [\%]} \\
 \hline
-\multicolumn{10}{@{}l}{\emph{THU-EACT-50-CHL}} \\
-\quad $0{,}5$\,M & $0{,}49$\,M & $24{,}5$ & $1\,101$ & $56{,}1$ & 24 & $0{,}46$\,M & $10{,}3$ & $482$ & $66{,}0$ \\
-\quad 1\,M & $1{,}10$\,M & $55{,}1$ & $1\,652$ & $68{,}8$ & 32 & $1{,}01$\,M & $18{,}4$ & $551$ & $70{,}4$ \\
-\quad 2\,M & $1{,}96$\,M & $98{,}0$ & $2\,202$ & $72{,}3$ & 16--24 & $1{,}75$\,M & $20{,}7$ & $482$ & $74{,}2$ \\
-\multicolumn{10}{@{}l}{\emph{DVS-Lip}} \\
-\quad $0{,}5$\,M & $0{,}50$\,M & $4{,}2$ & $123$ & $50{,}0$ & 64 & $0{,}49$\,M & $3{,}4$ & $92$ & $50{,}8$ \\
-\quad 1\,M & $1{,}11$\,M & $9{,}4$ & $184$ & $51{,}6$ & 64 & $1{,}05$\,M & $5{,}1$ & $92$ & $54{,}7$ \\
-\quad 2\,M & $1{,}97$\,M & $16{,}8$ & $246$ & $55{,}2$ & 32--64 & $1{,}81$\,M & $6{,}8$ & $92$ & $55{,}7$ \\
-\hline
-\end{tabular}
-\end{adjustbox}
-\end{table}
-
-\titoletto{I modelli distillati}
-I modelli distillati si lasciano comprimere meno, tanto che per lo studente compatto con cinque insegnanti nessun rango rispetta la tolleranza, e il migliore perde sette decimi di punto. Quello con quattro insegnanti scende soltanto a $q=96$, con un risparmio marginale. Con uno e due milioni di parametri la compressione torna utile, con ranghi da 64 a 128 e un risparmio sul sito fra il 33 e il $63\%$, sufficiente a restare sotto il mixer a ritardi della stessa larghezza. Una spiegazione compatibile è che la distillazione distribuisca l'informazione su più direzioni delle matrici $W_k$, ma la prova non basta a dimostrarlo. In pratica, su DVS-Lip il modello compatto più accurato, quello distillato, resta non compresso, con un sito che costa circa un quinto più del mixer a ritardi, mentre il modello compatto compresso è quello addestrato in modo standard. Il dettaglio di tutti i ranghi provati è nell'appendice~\ref{app:tabelle_estese}.
-
-
-% ==============================================================================
-%  Relazioni locali prima del pooling
-% ==============================================================================
-% Fonti (2026-11-19): src/etsr/models/local_prepool.py (R[d,delta,t,p] = u[t-d,p] u[t,p+delta] - u[t-d,p+delta] u[t,p],
-% u = proiezione 1x1 a rango 16 con init ortogonale, spostamenti (0,1), (1,0), (1,1), (1,-1), ritardi 1, 2, 4, media 3x3
-% con passo 2 sulla griglia ridotta, uscita 1x1 per ritardo inizializzata a zero, sommata alla corrente dopo il max
-% pooling; stato = proiezioni degli ultimi 4 passi). Sito: patch_embed1.main3, 32 canali a 64x64. Parametri +6.656
-% (519.980 su DVS-Lip, 513.530 su THU). Run 0,5 M: dvslip ...local-prepool-r16__20261118_133930_643475 (59,23/59,20),
-% THU ...__20261118_141606_059420 (69,17/63,08). Confronti con l'IRM (report validation_controls_vs_bminus.txt e documento
-% di struttura, sezione 5.5): DVS-Lip val +2,10 acc [+0,1; +3,9] p=0,037, F1 +1,73 [-0,2; +3,6]; test 53,41/52,62, +2,59
-% [+1,2; +4,0] p<0,001, F1 +2,23; THU val 0,00 p=1, F1 +0,52. Contro la distillazione compatta sul test: 53,41 contro
-% 55,66, -2,25 (p=0,002). Durata: 16,8 h contro 7,7 h dell'IRM (run.log). Scan in corso su Legion: 2123991 (2 M + KD4),
-% 2123992 (2 M), 2123993 (1 M + KD4), 2123994 (1 M), 2123995 (0,5 M + KD4). Il test a 0,5 M e' stato valutato il 19/11,
-% dopo la decisione di estendere la variante, presa sulla validazione. Costo dal profilo (lip_prepool.json): ramo circa
-% 8,0 M MAC per passo (rete 38,4 -> 46,5 M), stato +262.144 valori (rete 842 -> 1.104 mila), moltiplicazioni elemento per
-% elemento 1,6 M per passo.
-
-\section{Relazioni locali prima del pooling}
-\label{sec:relazioni_locali}
-
-Le sezioni precedenti hanno trovato per DVS-Lip due leve efficaci, la distillazione e la capacità, ma nessuna che riguardi la memoria. Resta da chiedersi se il confronto fra passato e presente possa aiutare anche questo compito, a una scala diversa da quella su cui lavora l'IRM.
-
-L'IRM confronta passato e presente nel secondo patch embedding, su feature che hanno già attraversato diversi pooling e che su DVS-Lip occupano una griglia di $8\times8$ posizioni, e a quel punto parte del dettaglio spaziale è ormai andata perduta. Le parole di DVS-Lip, però, si distinguono spesso per movimenti piccoli e brevi della bocca, e le coppie di parole più simili differiscono per poco. L'ipotesi è che un confronto calcolato prima, fra celle vicine e con ritardi brevi, possa conservare proprio quelle transizioni fini che il pooling cancella.
-
-\titoletto{Un correlatore fra celle vicine}
-La variante aggiunge un ramo all'ultimo strato del frontend piramidale che lavora a risoluzione piena, con 32 canali su una griglia di $64\times64$ celle, subito prima del pooling che la dimezza. Una proiezione appresa riduce la corrente $x_t$ di ogni cella a $r=16$ componenti, $u_t=Px_t$. Per ogni coppia di celle vicine $p$ e $p+\delta$, lungo quattro direzioni, orizzontale, verticale e le due diagonali, e per tre ritardi brevi $d\in\{1,2,4\}$ passi, il ramo calcola
-\begin{equation}
-\label{eq:relazione_locale}
-R_{d,\delta,t}(p)=u_{t-d}(p)\odot u_t(p+\delta)-u_{t-d}(p+\delta)\odot u_t(p).
-\end{equation}
-È il correlatore dell'equazione~\eqref{eq:reichardt} quasi alla lettera, con due celle vicine dell'immagine al posto dei due recettori e un ritardo di pochi passi, da $27$ a $110\,\mathrm{ms}$ su DVS-Lip, sicché il segno della risposta indica in quale verso qualcosa si è spostato da una cella all'altra. Le relazioni vengono poi mediate su piccoli gruppi di celle, per portarle alla risoluzione dopo il pooling, e riportate nei canali da una matrice appresa per ciascun ritardo, inizializzata a zero, che le somma alla corrente come una correzione prima del neurone. All'inizializzazione il ramo non contribuisce, e la rete parte di nuovo dalla funzione dell'IRM. L'IRM nel secondo patch embedding e il mixer a ritardi del primo restano al loro posto.
-
-Il ramo costa poco in parametri, $6\,656$ in più su circa mezzo milione, ma non in calcolo e in memoria. La sua memoria conserva soltanto le proiezioni a 16 componenti degli ultimi quattro passi, ma per ciascuna delle 4\,096 celle della griglia, cioè $262\,144$ valori, quasi un terzo in più dello stato dell'intera rete compatta. Il ramo aggiunge inoltre circa otto milioni di moltiplicazioni con accumulo per passo, un quinto in più della rete, e l'addestramento richiede quasi il doppio del tempo.
-
-\begin{table}[t]
-\centering
-\small
-\renewcommand{\arraystretch}{1.2}
-\caption[Relazioni locali prima del pooling, circa mezzo milione di parametri]{Relazioni locali prima del pooling, con circa mezzo milione di parametri. Valori in percentuale, differenze in punti rispetto all'IRM antisimmetrico. L'asterisco indica una differenza di accuratezza significativa nel confronto appaiato.}
-\label{tab:relazioni_locali}
-\begin{adjustbox}{max width=\textwidth}
-\begin{tabular}{@{}l r r r r@{}}
-\hline
- & \multicolumn{2}{c}{\textbf{IRM}} & \multicolumn{2}{c}{\textbf{IRM e relazioni locali}} \\
-\textbf{Dataset e partizione} & \textbf{Accuratezza} & \textbf{Macro-F1} & \textbf{Accuratezza} & \textbf{Macro-F1} \\
-\hline
-DVS-Lip, validazione & $57{,}1$ & $57{,}5$ & $59{,}2$ \;($+2{,}1^{*}$) & $59{,}2$ \;($+1{,}7$) \\
-DVS-Lip, test ufficiale & $50{,}8$ & $50{,}4$ & $53{,}4$ \;($+2{,}6^{*}$) & $52{,}6$ \;($+2{,}2$) \\
-THU-EACT-50-CHL, validazione & $69{,}2$ & $62{,}6$ & $69{,}2$ \;($0{,}0$) & $63{,}1$ \;($+0{,}5$) \\
+\multicolumn{9}{@{}l}{\emph{THU-EACT-50-CHL}} \\
+\quad $0{,}5$\,M & riferimento & -- & $0{,}49$\,M & $24{,}5$ & $1\,101$ & $214{,}7$ & $5\,721$ & $56{,}1$ \\
+ & IRM compresso & 24 & $0{,}46$\,M & $10{,}3$ & $482$ & $200{,}6$ & $5\,102$ & $66{,}0$ \\
+\quad 1\,M & riferimento & -- & $1{,}10$\,M & $55{,}1$ & $1\,652$ & $472{,}8$ & $8\,582$ & $68{,}8$ \\
+ & IRM compresso & 32 & $1{,}01$\,M & $18{,}4$ & $551$ & $436{,}1$ & $7\,480$ & $70{,}4$ \\
+\quad 2\,M & riferimento & -- & $1{,}96$\,M & $98{,}0$ & $2\,202$ & $831{,}4$ & $11\,442$ & $72{,}3$ \\
+ & IRM compresso & 16--24 & $1{,}75$\,M & $20{,}7$ & $482$ & $754{,}0$ & $9\,722$ & $74{,}2$ \\
+\multicolumn{9}{@{}l}{\emph{DVS-Lip}} \\
+\quad $0{,}5$\,M & riferimento & -- & $0{,}50$\,M & $4{,}2$ & $123$ & $37{,}6$ & $811$ & $50{,}0$ \\
+ & modello finale compresso & 96 & $0{,}52$\,M & $4{,}7$ & $123$ & $46{,}2$ & $1\,073$ & $56{,}6$ \\
+\quad 1\,M & riferimento & -- & $1{,}11$\,M & $9{,}4$ & $184$ & $82{,}8$ & $1\,217$ & $51{,}6$ \\
+ & modello finale compresso & 64 & $1{,}06$\,M & $5{,}1$ & $92$ & $90{,}5$ & $1\,386$ & $58{,}7$ \\
+\quad 2\,M & riferimento & -- & $1{,}97$\,M & $16{,}8$ & $246$ & $145{,}5$ & $1\,622$ & $55{,}2$ \\
+ & modello finale compresso & 128 & $1{,}91$\,M & $12{,}1$ & $154$ & $156{,}9$ & $1\,792$ & $60{,}1$ \\
 \hline
 \end{tabular}
 \end{adjustbox}
 \end{table}
-
-\titoletto{Il risultato con mezzo milione di parametri}
-Su DVS-Lip il ramo migliora l'IRM di due punti di accuratezza in validazione e di due e mezzo sul test ufficiale, in entrambi i casi in modo significativo (tabella~\ref{tab:relazioni_locali}). Sul test corregge 731 errori dell'IRM e ne introduce 602. È l'unica variante della memoria, fra quelle provate, che sposti DVS-Lip in modo misurabile nel regime compatto. Su THU-EACT-50-CHL, invece, non cambia nulla, e l'accuratezza di validazione resta identica. Il contrasto è coerente con l'ipotesi del dettaglio fine, anche se, come mostrerà la sezione~\ref{sec:errori}, il guadagno non viene dagli scambi fra le parole più simili. Una lettura plausibile è che le azioni di THU-EACT-50-CHL dipendano soprattutto da movimenti ampi e da distanze di secondi, già alla portata dell'IRM, mentre la lettura labiale dipende anche da transizioni locali di poche decine di millisecondi.
-
-Il ramo resta comunque sotto la distillazione, che sul test porta il modello compatto al $55{,}7\%$ contro il $53{,}4\%$, con una differenza significativa. Le due leve, d'altra parte, agiscono su cose diverse, perché le relazioni locali aggiungono informazione temporale che la rete prima non vedeva, mentre la distillazione riduce la varianza della soluzione. Se i loro effetti si sommino, e se il guadagno resista al crescere della capacità, è la domanda di una verifica ancora in corso.
-
-\titoletto{La verifica in corso}
-La verifica ripete la variante con uno e due milioni di parametri, con e senza la distillazione da quattro insegnanti, e anche con la distillazione nel modello compatto, sempre con la stessa ricetta e gli stessi insegnanti dell'IRM. Secondo una regola fissata in anticipo, le relazioni locali diventano parte della configurazione finale di DVS-Lip soltanto se migliorano l'IRM in validazione in modo coerente, con lo stesso segno a uno e a due milioni di parametri, con e senza distillazione. La conferma decisiva è il confronto con due milioni di parametri e distillazione. Il test ufficiale verrà valutato su tutte le configurazioni concluse, come per gli altri modelli, ma non entrerà nella decisione. Su THU-EACT-50-CHL la variante non viene estesa, perché nel modello compatto non dà alcun guadagno. \textbf{[In corso: risultati della verifica a uno e due milioni di parametri, con e senza distillazione. Se la regola sarà soddisfatta, la sezione diventerà la base della configurazione finale di DVS-Lip. Altrimenti resterà come prospettiva, con i numeri ottenuti.]}
 
 
 % ==============================================================================
@@ -313,9 +362,9 @@ La verifica ripete la variante con uno e due milioni di parametri, con e senza l
 % ==============================================================================
 % Fonti (2026-11-19). Modelli di questa tesi: finali6.py e compressione6.py (test ufficiale, logit di
 % artifacts/reports/b_minus_final_inference). THU compresso: 0,5 M q24 65,99/59,68; 1 M q32 70,40/64,38; 2 M (q24, 24,
-% 16) 74,20+-1,29 / 68,21+-1,35. DVS-Lip: distillato compatto 55,66/55,04 (non comprimibile); distillato 2 M
+% 16) 74,20+-1,29 / 68,21+-1,35. DVS-Lip: distillato compatto (quattro insegnanti) 54,25/53,77, compresso q96 54,37/53,86; distillato 2 M
 % 58,40+-0,24 / 57,88+-0,21 (compresso q128, 64, 64: 58,31 / 57,79); Acc1/Acc2 dai gruppi di
-% configs/dvslip_class_groups.json (IRM 0,5 M 42,1/59,6; distillato 0,5 M 46,0/65,4; IRM 2 M media 45,5/66,2; IRM 2 M
+% configs/dvslip_class_groups.json (IRM 0,5 M 42,1/59,6; distillato 0,5 M 44,1/64,5; IRM 2 M media 45,5/66,2; IRM 2 M
 % distillato media 48,2/68,7; relazioni locali 0,5 M 45,3/61,6). Letteratura verificata sulle versioni arXiv il
 % 19/11/2026: SMV-EAR tab. 2 (anche 62,9 senza augmentation), HoloEv-Net tab. I, Norrby et al. tab. 1 (le tre
 % configurazioni pre-addestrate su DailyDVS-200 con ViT-Tiny raggiungono 75,9, 78,5 e 78,7; addestrato da zero il ViT-Tiny
@@ -326,13 +375,20 @@ La verifica ripete la variante con uno e due milioni di parametri, con e senza l
 \section{I modelli finali e lo stato dell'arte}
 \label{sec:configurazioni_finali}
 
-Le sezioni precedenti hanno fissato, sempre sulla validazione di sviluppo, le configurazioni a cui arriva il lavoro (tabella~\ref{tab:configurazioni_finali}). Su THU-EACT-50-CHL sono l'IRM antisimmetrico alle tre larghezze, addestrato con la ricetta standard, e la sua versione compressa. Su DVS-Lip sono l'IRM distillato, con cinque insegnanti compatti nel modello da mezzo milione di parametri e con quattro insegnanti in quello da due milioni. Con le configurazioni fissate, il test ufficiale permette di collocare i risultati rispetto ai lavori pubblicati.
+Le sezioni precedenti hanno fissato, sempre sulla validazione di sviluppo, le configurazioni a cui arriva il lavoro (tabella~\ref{tab:configurazioni_finali}). Su THU-EACT-50-CHL sono l'IRM antisimmetrico alle tre larghezze, addestrato con la ricetta standard, e la sua versione compressa. Su DVS-Lip sono l'IRM con relazioni locali e distillazione, alle stesse tre larghezze, e la sua versione compressa. Le leve che portano a queste configurazioni si sommano in modo diverso nei due dataset (figura~\ref{fig:percorso}), perché su THU-EACT-50-CHL quasi tutto il guadagno viene dall'IRM, dieci punti nel modello compatto, e il resto dalla capacità, mentre su DVS-Lip l'IRM aggiunge meno di un punto, il confronto locale due e mezzo e la distillazione altri tre e mezzo, prima che la capacità porti il modello fino al $60{,}2\%$. Con le configurazioni fissate, il test ufficiale permette di collocare i risultati rispetto ai lavori pubblicati.
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=\textwidth]{images/cap6/cap6_percorso.pdf}
+    \caption[Dal modello di riferimento ai modelli finali]{Dal modello di riferimento ai modelli finali, una leva alla volta. Accuratezza sul test ufficiale, valutato a posteriori. Su DVS-Lip le prime quattro righe hanno circa mezzo milione di parametri, e capacità e compressione si applicano al modello con relazioni locali e distillazione. Su THU-EACT-50-CHL con due milioni di parametri, media di tre addestramenti. Le linee tratteggiate indicano la migliore rete spiking pubblicata e, su THU-EACT-50-CHL, il migliore metodo che non usa dati esterni.}
+    \label{fig:percorso}
+\end{figure}
 
 \begin{table}[t]
 \centering
 \small
 \renewcommand{\arraystretch}{1.2}
-\caption[Configurazioni finali sul test ufficiale]{Configurazioni finali sul test ufficiale, valutato a posteriori. Valori in percentuale. Con due milioni di parametri, media e deviazione standard di tre addestramenti. Su DVS-Lip il modello compatto distillato non si lascia comprimere entro la tolleranza (sezione~\ref{sec:compressione}).}
+\caption[Configurazioni finali sul test ufficiale]{Configurazioni finali sul test ufficiale, valutato a posteriori. Valori in percentuale. Su THU-EACT-50-CHL con due milioni di parametri, media di tre addestramenti.}
 \label{tab:configurazioni_finali}
 \begin{tabular}{@{}l l r r r@{}}
 \hline
@@ -342,12 +398,15 @@ Le sezioni precedenti hanno fissato, sempre sulla validazione di sviluppo, le co
 \quad $0{,}5$\,M & IRM compresso & $456\,698$ & $66{,}0$ & $59{,}7$ \\
 \quad 1\,M & IRM & $1\,123\,258$ & $71{,}9$ & $65{,}8$ \\
 \quad & IRM compresso & $1\,006\,522$ & $70{,}4$ & $64{,}4$ \\
-\quad 2\,M & IRM & $1\,981\,626$ & $74{,}3\pm1{,}0$ & $68{,}2\pm1{,}1$ \\
-\quad & IRM compresso & $1\,750\,202$ & $74{,}2\pm1{,}3$ & $68{,}2\pm1{,}4$ \\
+\quad 2\,M & IRM & $1\,981\,626$ & $74{,}3$ & $68{,}2$ \\
+\quad & IRM compresso & $1\,750\,202$ & $74{,}2$ & $68{,}2$ \\
 \multicolumn{5}{@{}l}{\emph{DVS-Lip}} \\
-\quad $0{,}5$\,M & IRM distillato & $513\,324$ & $55{,}7$ & $55{,}0$ \\
-\quad 2\,M & IRM distillato & $1\,994\,476$ & $58{,}4\pm0{,}2$ & $57{,}9\pm0{,}2$ \\
-\quad & IRM distillato e compresso & $1\,814\,252$ & $58{,}3\pm0{,}2$ & $57{,}8\pm0{,}2$ \\
+\quad $0{,}5$\,M & IRM, relazioni locali, distillazione & $519\,980$ & $56{,}8$ & $56{,}2$ \\
+\quad & \quad compresso & $515\,884$ & $56{,}6$ & $55{,}9$ \\
+\quad 1\,M & IRM, relazioni locali, distillazione & $1\,142\,892$ & $59{,}1$ & $58{,}6$ \\
+\quad & \quad compresso & $1\,056\,876$ & $58{,}7$ & $58{,}2$ \\
+\quad 2\,M & IRM, relazioni locali, distillazione & $2\,007\,788$ & $60{,}2$ & $59{,}7$ \\
+\quad & \quad compresso & $1\,909\,484$ & $60{,}1$ & $59{,}5$ \\
 \hline
 \end{tabular}
 \end{table}
@@ -359,7 +418,7 @@ La tabella~\ref{tab:stato_arte_thu} raccoglie i risultati pubblicati sul test uf
 \centering
 \small
 \renewcommand{\arraystretch}{1.15}
-\caption[Stato dell'arte su THU-EACT-50-CHL]{Accuratezza sul test ufficiale di THU-EACT-50-CHL. I valori della letteratura sono quelli riportati dalle fonti indicate, non riprodotti. Il pre-training è indicato soltanto quando usa dati diversi dal training di THU-EACT-50-CHL. Per i modelli di questa tesi con due milioni di parametri, media e deviazione standard di tre addestramenti.}
+\caption[Stato dell'arte su THU-EACT-50-CHL]{Accuratezza sul test ufficiale di THU-EACT-50-CHL. I valori della letteratura sono quelli riportati dalle fonti indicate, non riprodotti. Il pre-training è indicato soltanto quando usa dati diversi dal training di THU-EACT-50-CHL. Per i modelli di questa tesi con due milioni di parametri, media di tre addestramenti.}
 \label{tab:stato_arte_thu}
 \begin{adjustbox}{max width=\textwidth}
 \begin{tabular}{@{}l l r l r c@{}}
@@ -385,9 +444,9 @@ ViT-Tiny & ANN & $5{,}5$\,M & sì, DailyDVS-200 & $78{,}7$ & \cite{norrby2026eve
 \quad modello di riferimento & SNN & $1{,}10$\,M & no & $68{,}8$ & \\
 \quad IRM compresso & SNN & $1{,}01$\,M & no & $70{,}4$ & \\
 \quad IRM & SNN & $1{,}12$\,M & no & $71{,}9$ & \\
-\quad modello di riferimento & SNN & $1{,}96$\,M & no & $72{,}3\pm0{,}9$ & \\
-\quad IRM compresso & SNN & $1{,}75$\,M & no & $74{,}2\pm1{,}3$ & \\
-\quad IRM & SNN & $1{,}98$\,M & no & $74{,}3\pm1{,}0$ & \\
+\quad modello di riferimento & SNN & $1{,}96$\,M & no & $72{,}3$ & \\
+\quad IRM compresso & SNN & $1{,}75$\,M & no & $74{,}2$ & \\
+\quad IRM & SNN & $1{,}98$\,M & no & $74{,}3$ & \\
 \hline
 \end{tabular}
 \end{adjustbox}
@@ -404,18 +463,18 @@ Fra le reti spiking, la migliore pubblicata su questo dataset che abbiamo trovat
 
 Fra tutti i metodi che non usano dati esterni il migliore è HoloEv-Net-Base~\cite{hao2026holoev}, che con $12{,}5$ milioni di parametri arriva al $69{,}85\%$. La rete con l'IRM lo supera già con un milione di parametri, sia nella versione piena sia in quella compressa, e con due milioni lo supera in tutti e tre gli addestramenti ripetuti, di oltre quattro punti in media, con circa sei volte meno parametri. Nella fascia compatta, sotto il milione di parametri, il vantaggio è ancora più netto, perché le due reti ANN più piccole, EventMamba ed EventMG, restano sotto il $60\%$ e il modello compresso da $0{,}46$ milioni le supera di oltre sei punti, avvicinandosi a SMV-EAR~\cite{fan2026smvear}, che ne usa cinquanta volte tanti.\footnote{Il $66{,}7\%$ di SMV-EAR è ottenuto con augmentation. Senza, lo stesso lavoro riporta il $62{,}9\%$. Le configurazioni finali di questa tesi su THU-EACT-50-CHL non usano augmentation.}
 
-Un solo lavoro va oltre i nostri modelli, quello di Norrby e coautori~\cite{norrby2026event}, che pre-addestra in modo auto-supervisionato un ViT-Tiny su DailyDVS-200, un dataset di azioni a eventi molto più grande, e lo rifinisce su THU-EACT-50-CHL, arrivando al $78{,}7\%$. Lo stesso modello addestrato da zero si ferma intorno al $20\%$, e un ViT-Base pre-addestrato sul solo training di THU-EACT-50-CHL al $68{,}6\%$. Il pre-training su dati esterni è quindi la leva che fa la differenza, e il confronto va dichiarato per quello che è..
+Un solo lavoro va oltre i nostri modelli, quello di Norrby e coautori~\cite{norrby2026event}, che pre-addestra in modo auto-supervisionato un ViT-Tiny su DailyDVS-200, un dataset di azioni a eventi molto più grande, e lo rifinisce su THU-EACT-50-CHL, arrivando al $78{,}7\%$. Lo stesso modello addestrato da zero si ferma intorno al $20\%$, e un ViT-Base pre-addestrato sul solo training di THU-EACT-50-CHL al $68{,}6\%$. Il pre-training su dati esterni è quindi la leva che fa la differenza, e il confronto va dichiarato per quello che è.
 
 Ai risultati contribuiscono la rete compatta riallocata del capitolo~\ref{chap:riallocazione_budget}, il clock a passi di durata fisica costante del capitolo~\ref{chap:clock_input}, la capacità e, infine, la memoria relazionale, e sono quindi una proprietà dell'intera catena, non del solo modulo. Il ruolo dell'IRM è decisivo soprattutto a basso budget, dove con mezzo milione di parametri porta la rete dal $56{,}1$ al $66{,}0\%$. Con un milione è ciò che la porta sopra il $69{,}85\%$, perché il modello di riferimento della stessa larghezza resta al $68{,}8\%$. Con due milioni anche il modello di riferimento supera lo stato dell'arte senza dati esterni, con il $72{,}3\%$, e l'IRM vi aggiunge circa due punti, con lo stesso segno in tutti e tre gli addestramenti.
 
 \titoletto{DVS-Lip}
-Su DVS-Lip il quadro è diverso, e il confronto con la letteratura serve da contesto più che da gara (tabella~\ref{tab:stato_arte_lip}). I valori assoluti restano lontani dai migliori lavori pubblicati, anche fra le reti spiking, dove SpikingGRU2+ arriva al $75{,}3\%$. Parte della distanza ha ragioni di protocollo, perché i lavori più recenti addestrano con un'augmentation ricca, fatta di ritagli casuali, cancellazioni, zoom e mascheramenti temporali, che qui non è stata usata. Queste differenze non bastano però a spiegare tutto il divario, e non vanno presentate come una giustificazione. In questa tesi DVS-Lip ha avuto soprattutto il ruolo di un caso diagnostico, che ha mostrato quando una memoria non basta e quale leva invece funziona. Come in tutta la letteratura, il gruppo delle parole visivamente simili resta il punto più debole, con un'accuratezza di circa venti punti inferiore a quella delle altre parole.
+Su DVS-Lip il quadro è diverso, e il confronto con la letteratura serve da contesto più che da gara (tabella~\ref{tab:stato_arte_lip}). Il modello finale con due milioni di parametri arriva allo stesso $60{,}2\%$ di Spiking MSTP~\cite{zheng2026tvta}, una delle due reti spiking riportate su questo dataset, e quello con un milione di parametri ne resta a un punto. I valori assoluti restano però lontani dagli altri lavori pubblicati, anche fra le reti spiking, dove SpikingGRU2+ arriva al $75{,}3\%$. Parte della distanza ha ragioni di protocollo, perché i lavori più recenti addestrano con un'augmentation ricca, fatta di ritagli casuali, cancellazioni, zoom e mascheramenti temporali, che qui non è stata usata. Queste differenze non bastano però a spiegare tutto il divario, e non vanno presentate come una giustificazione. In questa tesi DVS-Lip ha avuto soprattutto il ruolo di un caso diagnostico, che ha mostrato quando una memoria a lungo termine non basta e quali leve funzionano al suo posto. Come in tutta la letteratura, il gruppo delle parole visivamente simili resta il punto più debole, con un'accuratezza di circa venti punti inferiore a quella delle altre parole.
 
 \begin{table}[t]
 \centering
 \small
 \renewcommand{\arraystretch}{1.15}
-\caption[DVS-Lip, test ufficiale]{Accuratezza sul test ufficiale di DVS-Lip, complessiva e sui due gruppi di parole, quelle visivamente simili (Acc1) e le altre (Acc2). I valori della letteratura sono quelli riportati dalle fonti indicate. Per i modelli di questa tesi con due milioni di parametri, media di tre addestramenti.}
+\caption[DVS-Lip, test ufficiale]{Accuratezza sul test ufficiale di DVS-Lip, complessiva e sui due gruppi di parole, quelle visivamente simili (Acc1) e le altre (Acc2). I valori della letteratura sono quelli riportati dalle fonti indicate.}
 \label{tab:stato_arte_lip}
 \begin{adjustbox}{max width=\textwidth}
 \begin{tabular}{@{}l l r r r c@{}}
@@ -431,18 +490,19 @@ HFR-Lip & ANN & n.d. & $77{,}1$ & $66{,}5$ / $87{,}7$ & \cite{zheng2026tvta} \\
 TVTA & ANN & n.d. & $77{,}5$ & $67{,}2$ / $87{,}8$ & \cite{zheng2026tvta} \\
 \hline
 \multicolumn{6}{@{}l}{\emph{Questo lavoro, SNN}} \\
-\quad IRM & SNN & $0{,}51$\,M & $50{,}8$ & $42{,}1$ / $59{,}6$ & \\
-\quad IRM e relazioni locali & SNN & $0{,}52$\,M & $53{,}4$ & $45{,}3$ / $61{,}6$ & \\
-\quad IRM distillato & SNN & $0{,}51$\,M & $55{,}7$ & $46{,}0$ / $65{,}4$ & \\
-\quad IRM & SNN & $1{,}99$\,M & $55{,}8$ & $45{,}5$ / $66{,}2$ & \\
-\quad IRM distillato & SNN & $1{,}99$\,M & $58{,}4$ & $48{,}2$ / $68{,}7$ & \\
+\quad modello di riferimento & SNN & $0{,}50$\,M & $50{,}0$ & $41{,}8$ / $58{,}3$ & \\
+\quad IRM, relazioni locali, distillazione & SNN & $0{,}52$\,M & $56{,}8$ & $46{,}7$ / $67{,}1$ & \\
+\quad modello di riferimento & SNN & $1{,}11$\,M & $51{,}6$ & $42{,}7$ / $60{,}6$ & \\
+\quad IRM, relazioni locali, distillazione & SNN & $1{,}14$\,M & $59{,}1$ & $50{,}0$ / $68{,}2$ & \\
+\quad modello di riferimento & SNN & $1{,}97$\,M & $55{,}2$ & $46{,}0$ / $64{,}5$ & \\
+\quad IRM, relazioni locali, distillazione & SNN & $2{,}01$\,M & $60{,}2$ & $50{,}7$ / $69{,}8$ & \\
 \hline
 \end{tabular}
 \end{adjustbox}
 \end{table}
 
 \titoletto{Cautele di protocollo}
-Il confronto sul test ufficiale richiede alcune cautele, a cominciare dal fatto che i modelli di questa tesi sono addestrati sullo split di sviluppo, che su THU-EACT-50-CHL contiene $1\,387$ clip invece delle $1\,786$ del training ufficiale, e nessuno dei lavori citati dichiara di aver ridotto il proprio. Il confronto è quindi, semmai, sfavorevole a noi. Le configurazioni finali su THU-EACT-50-CHL non usano augmentation, pre-training o dati esterni. I risultati con mezzo e con un milione di parametri vengono da un solo addestramento, quelli con due milioni sono la media di tre. Il test è stato valutato a posteriori, su modelli scelti sulla validazione, e non ha guidato alcuna scelta. Le cifre della letteratura, infine, sono quelle riportate dai rispettivi lavori, che non abbiamo riprodotto.
+Il confronto sul test ufficiale richiede alcune cautele, a cominciare dal fatto che i modelli di questa tesi sono addestrati sullo split di sviluppo, che su THU-EACT-50-CHL contiene $1\,387$ clip invece delle $1\,786$ del training ufficiale, e nessuno dei lavori citati dichiara di aver ridotto il proprio. Il confronto è quindi, semmai, sfavorevole a noi. Le configurazioni finali su THU-EACT-50-CHL non usano augmentation, pre-training o dati esterni. Il test è stato valutato a posteriori, su modelli scelti sulla validazione, e non ha guidato alcuna scelta. Le cifre della letteratura, infine, sono quelle riportate dai rispettivi lavori, che non abbiamo riprodotto.
 
 
 % ==============================================================================
@@ -450,10 +510,11 @@ Il confronto sul test ufficiale richiede alcune cautele, a cominciare dal fatto 
 % ==============================================================================
 % Fonti (2026-11-19): figure_scripts/cap6/fig_errori_lip.py (test ufficiale, logit di b_minus_final_inference; gruppi e
 % coppie da configs/dvslip_class_groups.json). Errori sul test (scambi nella coppia / altri errori sulle parole delle
-% coppie / errori sulle altre parole): riferimento 442/1010/1035, IRM 478/965/1004, IRM distillato 515/832/859, IRM 2 M
-% 481/879/840, IRM 2 M distillato 500/792/778 (media di tre addestramenti), relazioni locali 488/877/953. Scambi nelle
-% coppie piu' difficili per l'IRM 2 M distillato (tre addestramenti): price/press 39,7%, spend/spent 36,7%,
-% benefit/benefits 36,4%, happen/happened 33,3%; terms/times 4,0%, election/action 3,7%. Durata: quartili del numero di
+% coppie / errori sulle altre parole): riferimento 442/1010/1035, IRM 478/965/1004, IRM e relazioni locali 488/877/953,
+% con distillazione 500/830/817, modello finale 2 M (relazioni locali e distillazione) 491/738/750. Scambi nelle coppie piu'
+% difficili per il modello finale: price/press 38,0%, happen/happened 36,4%, benefit/benefits 35,4%, america/american
+% 32,3%; terms/times e election/action 2,0%. Durata, test, modello finale: 52,6/57,4/61,5/72,2 (riferimento
+% 39,8/47,9/52,9/63,5); validazione 63,8...78,7. Durata: quartili del numero di
 % passi validi (validazione: soglie 36/40/44; test: 38/41/44, passi da c0_ri_diagnostics/workers/dvslip_c0); la parola
 % spiega il 39% della varianza della durata sul test; parole delle coppie nel quartile piu' breve 58,2%, nel piu' lungo
 % 37,1%; il 95% delle clip del test ha almeno 33 passi (minimo 24). THU: classi da risultati6.classi_thu (validazione),
@@ -467,24 +528,24 @@ Il confronto sul test ufficiale richiede alcune cautele, a cominciare dal fatto 
 Le sezioni precedenti hanno mostrato quanto si possa guadagnare con la memoria relazionale, la capacità e la distillazione. Questa sezione guarda invece a ciò che resta, cioè agli errori che nessuna di queste leve corregge. Su DVS-Lip riguardano soprattutto due aspetti, le coppie di parole simili e le clip più brevi. Su entrambi i dataset ne riguardano un terzo, il ritmo con cui i movimenti vengono eseguiti.
 
 \titoletto{Le coppie di parole simili}
-Metà delle parole di DVS-Lip forma 25 coppie visivamente simili, come \emph{spend} e \emph{spent} o \emph{price} e \emph{press}, sulle quali si calcola Acc1 (sezione~\ref{subsec:dvslip}). La figura~\ref{fig:confusione_lip}a mostra gli errori del miglior modello finale sul test ufficiale, con le parole disposte in modo che le due di ciascuna coppia siano adiacenti. Gli errori fra parole simili si raccolgono in piccoli blocchi lungo la diagonale, dove una parola viene presa per la sua compagna. Nelle coppie più difficili accade a più di un terzo delle clip, per esempio con \emph{price} e \emph{press}, \emph{spend} e \emph{spent}, \emph{benefit} e \emph{benefits} o \emph{happen} e \emph{happened}, mentre altre coppie, come \emph{terms} e \emph{times}, quasi non si confondono. Molte delle coppie difficili differiscono soltanto per una desinenza, cioè per un movimento breve e poco visibile alla fine della parola.
+Metà delle parole di DVS-Lip forma 25 coppie visivamente simili, come \emph{spend} e \emph{spent} o \emph{price} e \emph{press}, sulle quali si calcola Acc1 (sezione~\ref{subsec:dvslip}). La figura~\ref{fig:confusione_lip}a mostra gli errori del miglior modello finale sul test ufficiale, con le parole disposte in modo che le due di ciascuna coppia siano adiacenti. Gli errori fra parole simili si raccolgono in piccoli blocchi lungo la diagonale, dove una parola viene presa per la sua compagna. Nelle coppie più difficili accade a più di un terzo delle clip, come con \emph{price} e \emph{press}, \emph{happen} e \emph{happened} o \emph{benefit} e \emph{benefits}, mentre altre coppie, come \emph{terms} e \emph{times} o \emph{election} e \emph{action}, quasi non si confondono. Molte delle coppie difficili differiscono soltanto per una desinenza, cioè per un movimento breve e poco visibile alla fine della parola.
 
 \begin{figure}[t]
     \centering
     \includegraphics[width=\textwidth]{images/cap6/cap6_confusione_lip.pdf}
-    \caption[Errori sulle coppie di parole simili di DVS-Lip]{Errori sulle coppie di parole simili di DVS-Lip, sul test ufficiale. (a)~Errori dell'IRM con due milioni di parametri e distillazione, sommati sui tre addestramenti. Ogni riga è una parola pronunciata, e il colore indica la percentuale delle sue clip assegnate a ciascuna parola predetta. La diagonale, cioè le risposte corrette, è esclusa e in grigio. Le due parole di ciascuna coppia sono adiacenti, e gli scambi fra loro formano i blocchi lungo la diagonale nel riquadro in alto a sinistra. (b)~Clip sbagliate lungo il percorso dei modelli, divise in scambi fra le due parole di una coppia, altri errori sulle parole delle coppie ed errori sulle altre parole. Per i modelli con due milioni di parametri, media di tre addestramenti.}
+    \caption[Errori sulle coppie di parole simili di DVS-Lip]{Errori sulle coppie di parole simili di DVS-Lip, sul test ufficiale. (a)~Errori del modello finale con due milioni di parametri, cioè l'IRM con relazioni locali e distillazione. Ogni riga è una parola pronunciata, e il colore indica la percentuale delle sue clip assegnate a ciascuna parola predetta. La diagonale, cioè le risposte corrette, è esclusa e in grigio. Le due parole di ciascuna coppia sono adiacenti, e gli scambi fra loro formano i blocchi lungo la diagonale nel riquadro in alto a sinistra. (b)~Clip sbagliate lungo il percorso dei modelli, divise in scambi fra le due parole di una coppia, altri errori sulle parole delle coppie ed errori sulle altre parole.}
     \label{fig:confusione_lip}
 \end{figure}
 
-Lungo il percorso dei modelli (figura~\ref{fig:confusione_lip}b), distillazione e capacità riducono di circa un quarto gli errori verso parole diverse dalla compagna, sia fra le parole delle coppie sia fra le altre. Gli scambi dentro la coppia, invece, non scendono, e passano anzi da 442 nel modello di riferimento a circa 500 nei modelli migliori. Via via che la rete impara a riconoscere a quale coppia appartenga una parola, una quota crescente dei suoi errori residui si concentra proprio sulla scelta fra le due parole della coppia. Nemmeno le relazioni locali della sezione~\ref{sec:relazioni_locali}, pensate per i dettagli fini, riducono gli scambi, e anche il loro guadagno viene dagli altri errori. Il conteggio stabile non va letto come un limite invalicabile, perché i migliori lavori pubblicati superano su queste parole l'accuratezza dei nostri modelli di circa venti punti (tabella~\ref{tab:stato_arte_lip}). Indica però che le leve provate in questa tesi non toccano la distinzione più fine che il compito richiede.
+Lungo il percorso dei modelli (figura~\ref{fig:confusione_lip}b), relazioni locali, distillazione e capacità riducono di oltre un quarto gli errori verso parole diverse dalla compagna, sia fra le parole delle coppie sia fra le altre. Gli scambi dentro la coppia, invece, non scendono, e passano anzi da 442 nel modello di riferimento a 491 nel modello finale. Via via che la rete impara a riconoscere a quale coppia appartenga una parola, una quota crescente dei suoi errori residui si concentra proprio sulla scelta fra le due parole della coppia. Nemmeno le relazioni locali della sezione~\ref{sec:relazioni_locali}, pensate per i dettagli fini, riducono gli scambi, e anche il loro guadagno viene dagli altri errori. Il conteggio stabile non va letto come un limite invalicabile, perché i migliori lavori pubblicati superano su queste parole l'accuratezza dei nostri modelli di circa venti punti (tabella~\ref{tab:stato_arte_lip}). Indica però che le leve provate in questa tesi non toccano la distinzione più fine che il compito richiede.
 
 \titoletto{Le clip più brevi}
-La seconda difficoltà riguarda la durata, e dividendo le clip in quattro gruppi secondo il numero di passi, dalle più brevi alle più lunghe, le prime risultano le più difficili per tutti i modelli (figura~\ref{fig:durata}). Sul test il modello di riferimento passa dal $40\%$ di accuratezza nel gruppo più breve al $64\%$ in quello più lungo. Ogni leva alza tutti i gruppi di una quantità simile, e il modello finale arriva al $50$ e al $71\%$, ma il divario resta di circa venti punti sul test e di quattordici in validazione.
+La seconda difficoltà riguarda la durata, e dividendo le clip in quattro gruppi secondo il numero di passi, dalle più brevi alle più lunghe, le prime risultano le più difficili per tutti i modelli (figura~\ref{fig:durata}). Sul test il modello di riferimento passa dal $40\%$ di accuratezza nel gruppo più breve al $64\%$ in quello più lungo. Il modello finale alza tutti i gruppi, quello più breve un po' di più, e arriva al $53$ e al $72\%$, ma il divario resta di circa venti punti sul test e di quindici in validazione.
 
 \begin{figure}[t]
     \centering
     \includegraphics[width=\textwidth]{images/cap6/cap6_durata.pdf}
-    \caption[Accuratezza su DVS-Lip per durata delle clip]{Accuratezza su DVS-Lip per durata delle clip, in quattro gruppi delimitati dai quartili del numero di passi, dal più breve al più lungo, lungo il percorso dei modelli. Il grigio indica il modello di riferimento, le tinte chiare e scure i modelli con mezzo milione e con due milioni di parametri, il tratteggio la distillazione. Per i modelli con due milioni di parametri, media di tre addestramenti.}
+    \caption[Accuratezza su DVS-Lip per durata delle clip]{Accuratezza su DVS-Lip per durata delle clip, in quattro gruppi delimitati dai quartili del numero di passi, dal più breve al più lungo, lungo il percorso dei modelli. Il grigio indica il modello di riferimento, il blu chiaro l'IRM con relazioni locali con mezzo milione di parametri, il blu scuro il modello finale con due milioni, il tratteggio la distillazione.}
     \label{fig:durata}
 \end{figure}
 

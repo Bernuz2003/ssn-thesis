@@ -1,8 +1,8 @@
 """Errori residui su DVS-Lip (sezione 6.6): figure cap6_confusione_lip e cap6_durata.
 
 cap6_confusione_lip
-(a) Matrice degli errori sul test ufficiale dell'IRM con due milioni di parametri e distillazione (conteggi sommati sui
-    tre addestramenti), normalizzata per riga e con la diagonale esclusa. Le 100 parole sono ordinate mettendo accanto le
+(a) Matrice degli errori sul test ufficiale del modello finale di DVS-Lip con due milioni di parametri (IRM, relazioni
+    locali prima del pooling e distillazione), normalizzata per riga e con la diagonale esclusa. Le 100 parole sono ordinate mettendo accanto le
     due parole di ciascuna delle 25 coppie visivamente simili (gruppo di Acc1), seguite dalle altre 50 (gruppo di Acc2),
     secondo configs/dvslip_class_groups.json.
 (b) Errori sul test per gruppo, lungo il percorso dei modelli: scambi dentro la coppia, altri errori sulle parole delle
@@ -26,9 +26,8 @@ PARTNER = -np.ones(100, int)
 for a, b in PAIRS:
     PARTNER[IDX[a]] = IDX[b]; PARTNER[IDX[b]] = IDX[a]
 CONF = PARTNER >= 0
-PATH = [('riferi-\nmento', ['lip_c0']), ('IRM', ['lip_b']), ('IRM\ndistillato', ['lip_kd5']),
-        ('IRM\n2 M', ['lip_b_2m', 'lip_b_2m_s43', 'lip_b_2m_s44']),
-        ('IRM 2 M\ndistillato', ['lip_kd4_2m', 'lip_kd4_2m_s43', 'lip_kd4_2m_s44'])]
+PATH = [('riferi-\nmento', ['lip_c0']), ('IRM e\nrel. locali', ['lip_prepool']),
+        ('+ distil-\nlazione', ['lip_prepool_kd4_05']), ('finale,\n2 M', ['lip_prepool_2m_kd4'])]
 BLUE = DSCOL['dvslip']
 
 # ---- confusione ---------------------------------------------------------------------------------------------
@@ -53,7 +52,7 @@ ax.grid(False)
 cb = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.03)
 cb.ax.tick_params(labelsize=6.5)
 cb.ax.yaxis.set_major_formatter(comma(0))
-ax.set_title(r"\textbf{(a)} errori dell'IRM 2 M distillato", loc='left', fontsize=8.2)
+ax.set_title(r"\textbf{(a)} errori del modello finale, 2 M", loc='left', fontsize=8.2)
 
 ax = axes[1]
 vals = []
@@ -91,8 +90,8 @@ z = np.load('/home/emanuele/Scrivania/Tesi/temporal-event-spiking-research/artif
 steps_test = dict(zip(z['sample_ids'].tolist(), z['steps'].tolist()))
 rows = list(csv.DictReader(open(f"{path('dvslip', 'rif')}/validation_predictions.csv")))
 steps_val = {r['sample_id']: int(r['valid_steps']) for r in rows}
-COLS = ['#a8a8a8', '#7fb0ea', '#7fb0ea', '#0d3d78', '#0d3d78']  # grigio riferimento, chiaro 0,5 M, scuro 2 M
-STY = ['-', '-', '--', '-', '--']  # tratteggio: distillazione
+COLS = ['#a8a8a8', '#7fb0ea', '#7fb0ea', '#0d3d78']  # grigio riferimento, chiaro 0,5 M, scuro 2 M
+STY = ['-', '-', '--', '--']  # tratteggio: distillazione
 fig, axes = plt.subplots(1, 2, figsize=(WIDTH, 2.7), sharey=True, gridspec_kw=dict(wspace=0.08))
 for ax, part, steps, title in [(axes[0], 'val', steps_val, 'validazione di sviluppo'),
                                (axes[1], 'test', steps_test, 'test ufficiale')]:

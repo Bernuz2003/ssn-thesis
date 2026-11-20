@@ -17,9 +17,14 @@ MODELS = {
                         ('IRM', '2 M', ['thu_b_2m', 'thu_b_2m_s43', 'thu_b_2m_s44'])],
     'dvslip': [('IRM', '0,5 M', ['lip_b']), ('IRM', '1 M', ['lip_b_1m']),
                ('IRM', '2 M', ['lip_b_2m', 'lip_b_2m_s43', 'lip_b_2m_s44']),
-               ('IRM distillato', '0,5 M', ['lip_kd5']), ('IRM distillato', '0,5 M (4 ins.)', ['lip_kd4_05']),
+               ('IRM distillato', '0,5 M', ['lip_kd4_05']),
                ('IRM distillato', '1 M', ['lip_kd4_1m']),
-               ('IRM distillato', '2 M', ['lip_kd4_2m', 'lip_kd4_2m_s43', 'lip_kd4_2m_s44'])],
+               ('IRM distillato', '2 M', ['lip_kd4_2m', 'lip_kd4_2m_s43', 'lip_kd4_2m_s44']),
+               ('IRM con relazioni locali', '1 M', ['lip_prepool_1m']),
+               ('IRM con relazioni locali', '2 M', ['lip_prepool_2m']),
+               ('IRM con relazioni locali, distillato', '0,5 M', ['lip_prepool_kd4_05']),
+               ('IRM con relazioni locali, distillato', '1 M', ['lip_prepool_1m_kd4']),
+               ('IRM con relazioni locali, distillato', '2 M', ['lip_prepool_2m_kd4'])],
 }
 MIXER = {'thu_eact_50_chl': {'0,5 M': 'thu_c0', '1 M': 'thu_c0_1m', '2 M': 'thu_c0_2m'},
          'dvslip': {'0,5 M': 'lip_c0', '1 M': 'lip_c0_1m', '2 M': 'lip_c0_2m'}}
