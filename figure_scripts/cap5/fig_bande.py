@@ -1,36 +1,40 @@
+"""Ritardi del mixer a ritardi e bande della memoria a intervalli (figura 5.2), in tempo fisico.
+
+Un pannello per dataset, con asse lineare che parte da 0 (il presente). Ogni passo e' disegnato come un intervallo
+centrato sul proprio ritardo, sicche' il presente occupa la prima mezza cella e la banda 1 comincia subito dopo.
+"""
 import numpy as np
 from matplotlib.patches import Rectangle
 from matplotlib.lines import Line2D
 from common5 import *
 
-fig, ax = plt.subplots(figsize=(WIDTH, 1.65))
-rows = list(DS)[::-1]
-for yi, (d, C, name) in enumerate(rows):
+rows = list(DS)
+XMAX = {'dvslip': 450, 'thu_eact_50_chl': 1700}
+fig, axes = plt.subplots(len(rows), 1, figsize=(WIDTH, 2.3), gridspec_kw=dict(hspace=0.95))
+for ax, (d, C, name) in zip(axes, rows):
     dl, dt = DELAYS[d], DELTA_MS[d]
+    ax.add_patch(Rectangle((0, -0.28), 0.5 * dt, 0.56, facecolor=INK, edgecolor='white', linewidth=1.0))
     lo = 0
     for k, up in enumerate(dl):
         x0, x1 = (lo + 0.5) * dt, (up + 0.5) * dt
-        ax.add_patch(Rectangle((x0, yi - 0.28), x1 - x0, 0.56, facecolor=BAND[k], edgecolor='white', linewidth=1.0))
+        ax.add_patch(Rectangle((x0, -0.28), x1 - x0, 0.56, facecolor=BAND[k], edgecolor='white', linewidth=1.0))
         lo = up
     lags = np.arange(1, dl[-1] + 1) * dt
-    ax.plot(lags, np.full_like(lags, yi + 0.36), linestyle='', marker='|', markersize=4, color=MUTED)
-    ax.plot(np.array(dl) * dt, np.full(len(dl), yi + 0.36), linestyle='', marker='o', markersize=4.5,
+    ax.plot(lags, np.full_like(lags, 0.42), linestyle='', marker='|', markersize=4, color=MUTED)
+    ax.plot(np.array(dl) * dt, np.full(len(dl), 0.42), linestyle='', marker='o', markersize=4.5,
             color=INK, markeredgecolor='white', markeredgewidth=0.6)
-    ax.text(1.01, yi, r"%d ritardi su %d" % (len(dl), dl[-1]), transform=ax.get_yaxis_transform(),
-            va='center', fontsize=7.5, color=INK2)
-ax.set_xscale('log')
-ax.set_xlim(18, 2400)
-ax.set_xticks([20, 50, 100, 200, 500, 1000, 2000])
-ax.set_xticklabels(['20', '50', '100', '200', '500', '1000', '2000'])
-ax.minorticks_off()
-ax.set_yticks(range(len(rows))); ax.set_yticklabels([n for _, _, n in rows])
-ax.set_ylim(-0.6, len(rows) - 0.25)
-ax.tick_params(axis='y', length=0)
-ax.grid(axis='y', visible=False)
-ax.set_xlabel("distanza nel passato [ms], scala logaritmica")
-handles = [Line2D([], [], linestyle='', marker='o', color=INK, markersize=4.5, label='ritardi letti dal mixer a ritardi'),
+    ax.text(1.01, 0, r"%d ritardi su %d" % (len(dl), dl[-1]), transform=ax.get_yaxis_transform(),
+            va='center', fontsize=7.2, color=INK2)
+    ax.set_xlim(0, XMAX[d]); ax.set_ylim(-0.45, 0.62)
+    ax.set_yticks([0]); ax.set_yticklabels([name], fontsize=7.5)
+    ax.tick_params(axis='y', length=0)
+    ax.grid(axis='y', visible=False)
+    ax.tick_params(axis='x', labelsize=7)
+axes[-1].set_xlabel("distanza nel passato [ms]", fontsize=7.5)
+handles = [Rectangle((0, 0), 1, 1, facecolor=INK, edgecolor='white', label='presente'),
+           Line2D([], [], linestyle='', marker='o', color=INK, markersize=4.5, label='ritardi del mixer'),
            Line2D([], [], linestyle='', marker='|', color=MUTED, markersize=6, label='passi del passato')]
 handles += [Rectangle((0, 0), 1, 1, facecolor=BAND[k], edgecolor='white', label=f'banda {k + 1}') for k in range(4)]
-fig.legend(handles=handles, loc='upper center', bbox_to_anchor=(0.5, 1.13), ncol=6, fontsize=7.2,
-           handlelength=1.1, columnspacing=0.9, handletextpad=0.4)
+fig.legend(handles=handles, loc='upper center', bbox_to_anchor=(0.5, 1.07), ncol=7, fontsize=6.6,
+           handlelength=1.0, columnspacing=0.7, handletextpad=0.35)
 save(fig, 'cap5_bande')

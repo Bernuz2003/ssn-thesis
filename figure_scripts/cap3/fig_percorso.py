@@ -18,7 +18,7 @@ for key, rid in CHAIN:
 for k, r in zip([c[0] for c in CHAIN], rows):
     print(k, {a: (round(b, 3) if isinstance(b, float) else b) for a, b in r.items()})
 
-fig, (a1, a2) = plt.subplots(1, 2, figsize=(WIDTH, 2.55), gridspec_kw=dict(width_ratios=[1, 1.25], wspace=0.32))
+fig, (a1, a2) = plt.subplots(1, 2, figsize=(WIDTH, 2.55), gridspec_kw=dict(width_ratios=[1, 1.3], wspace=0.42))
 x = np.arange(len(rows))
 
 # (a) Macro-F1
@@ -35,29 +35,30 @@ a1.set_ylabel(r"Macro-F1 [\%]", fontsize=7.5)
 a1.grid(axis="x", visible=False)
 a1.set_title(r"(a) prestazioni", loc="left", fontsize=8.5)
 
-# (b) costi relativi alla baseline
-series = [("params", "parametri", INK2, (0, (3, 2))), ("mac", "MAC", ST2, "-"), ("ac", "accumuli potenziali", ST1, "-"),
-          ("state", "stato", PE2, "-"), ("energy", "stima energetica", PE1, "-")]
-ends = []
-for key, name, col, ls in series:
-    rel = [100 * r[key] / rows[0][key] for r in rows]
-    a2.plot(x, rel, color=col, ls=ls, lw=1.5, marker="o", ms=3.5, zorder=3)
-    ends.append((rel[-1], name, col))
-    print(f"  {name:20s}", [round(q, 1) for q in rel])
-# etichette dirette a destra, distanziate
-ends.sort()
-ylab = []
-for val, name, col in ends:
-    yy = val if not ylab or val - ylab[-1] > 7 else ylab[-1] + 7
-    ylab.append(yy)
-    a2.text(len(rows) - 1 + 0.12, yy, name, va="center", fontsize=6.8, color=INK2)
-a2.axhline(100, color=GRID, lw=0.8, zorder=0)
+# (b) costi relativi alla baseline: tabella a colori, una riga per metrica e una colonna per passo (cumulativo)
+from matplotlib.colors import LinearSegmentedColormap, TwoSlopeNorm
+METRICS = [("params", "parametri"), ("mac", "MAC"), ("energy", "energia\nstimata"), ("ac", "accumuli\npotenziali"),
+           ("state", "stato")]
+R = np.array([[100 * rows[i][k] / rows[0][k] for i in range(len(rows))] for k, _ in METRICS])
+for (k, name), r in zip(METRICS, R):
+    print(f"  {name.replace(chr(10), ' '):20s}", [round(q, 1) for q in r])
+cmap = LinearSegmentedColormap.from_list("div", [(0, "#0d3d78"), (0.25, ST1), (0.43, "#cfe0f6"), (0.5, "#f4f3ef"),
+                                                (0.62, "#f6c9a8"), (1, ST2)])
+norm = TwoSlopeNorm(vmin=40, vcenter=100, vmax=115)
+a2.imshow(R, cmap=cmap, norm=norm, aspect="auto")
+for i in range(R.shape[0]):
+    for j in range(R.shape[1]):
+        v = R[i, j]
+        a2.text(j, i, rf"${v:.0f}\,\%$", ha="center", va="center", fontsize=7,
+                color="white" if v < 62 else INK)
 a2.set_xticks(x); a2.set_xticklabels(LABELS, fontsize=6.6)
-a2.set_xlim(-0.25, len(rows) - 1 + 1.25)
-a2.set_ylim(30, 130)
-a2.yaxis.set_major_formatter(comma(0, percent=True))
-a2.set_ylabel(r"rispetto alla baseline", fontsize=7.5)
-a2.grid(axis="x", visible=False)
-a2.set_title(r"(b) costi", loc="left", fontsize=8.5)
+a2.set_yticks(range(len(METRICS))); a2.set_yticklabels([n for _, n in METRICS], fontsize=6.8)
+a2.tick_params(length=0)
+for sp in a2.spines.values():
+    sp.set_visible(False)
+a2.set_xticks(np.arange(-0.5, len(rows), 1), minor=True); a2.set_yticks(np.arange(-0.5, len(METRICS), 1), minor=True)
+a2.grid(which="minor", color="white", lw=1.5); a2.grid(which="major", visible=False)
+a2.tick_params(which="minor", length=0)
+a2.set_title(r"(b) costi rispetto alla baseline", loc="left", fontsize=8.5)
 
 save(fig, "cap3_percorso")

@@ -99,7 +99,10 @@ if __name__ == '__main__':
             ax.axhline(yy - 1.3, color=GRID if 'GRID' in globals() else '#dddddd', lw=0.6, zorder=0)
         ax.xaxis.set_major_formatter(comma(0))
         ax.grid(axis='y', visible=False)
-        ax.set_xlim(-17, 6)
+        if ds == 'dvslip':  # scala piu' stretta, per leggere le differenze piccole
+            ax.set_xlim(-5.5, 5.5); ax.set_xticks([-4, -2, 0, 2, 4])
+        else:
+            ax.set_xlim(-17, 6)
     axes[0].set_yticks([yy for _, yy in keys])
     axes[0].set_yticklabels(labels, fontsize=7.3)
     axes[0].invert_yaxis()

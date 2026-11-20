@@ -142,17 +142,17 @@ Cambiando la durata dei bin cambia anche il significato dei ritardi, che per con
 \centering
 \small
 \renewcommand{\arraystretch}{1.2}
-\caption[Calibrazione della rappresentazione a lunghezza variabile]{Calibrazione della rappresentazione a lunghezza variabile. La durata $\Delta$ è calibrata sul solo addestramento e applicata invariata alla validazione. I ritardi del mixer temporale sono riscalati per conservare gli orizzonti fisici della finestra fissa, indicati nell'ultima colonna.}
+\caption[Calibrazione della rappresentazione a lunghezza variabile]{Calibrazione della rappresentazione a lunghezza variabile. La durata $\Delta$ è calibrata sul solo addestramento e applicata invariata alla validazione. I ritardi del mixer temporale sono riscalati per conservare gli orizzonti fisici della finestra fissa.}
 \label{tab:calibrazione_vc}
 \begin{adjustbox}{max width=\textwidth}
-\begin{tabular}{@{}l c c c c c@{}}
+\begin{tabular}{@{}l c c c c@{}}
 \hline
-\textbf{Dataset} & \textbf{$\Delta t$ fissa} & \textbf{$\Delta$ variabile} & \textbf{Passi in validazione} & \textbf{Ritardi} & \textbf{Orizzonti [ms]} \\
+\textbf{Dataset} & \textbf{$\Delta t$ fissa} & \textbf{$\Delta$ variabile} & \textbf{Passi in validazione} & \textbf{Ritardi} \\
 \hline
-DVS-Lip & $50\,\mathrm{ms}$ & $27{,}42\,\mathrm{ms}$ & da 25 a 67 & $2,4,7,15$ & $55,110,192,411$ \\
-DVS128 Gesture & $500\,\mathrm{ms}$ & $164{,}36\,\mathrm{ms}$ & da 16 a 74 & $3,6,12,24$ & $493,986,1972,3945$ \\
-CIFAR10-DVS & $50\,\mathrm{ms}$ & $32{,}88\,\mathrm{ms}$ & da 37 a 44 & $2,3,6,12$ & $66,99,197,395$ \\
-THU-EACT-50-CHL & $200\,\mathrm{ms}$ & $70{,}00\,\mathrm{ms}$ & da 20 a 285 & $3,6,11,23$ & $210,420,770,1610$ \\
+DVS-Lip & $50\,\mathrm{ms}$ & $27{,}42\,\mathrm{ms}$ & da 25 a 67 & $2,4,7,15$ \\
+DVS128 Gesture & $500\,\mathrm{ms}$ & $164{,}36\,\mathrm{ms}$ & da 16 a 74 & $3,6,12,24$ \\
+CIFAR10-DVS & $50\,\mathrm{ms}$ & $32{,}88\,\mathrm{ms}$ & da 37 a 44 & $2,3,6,12$ \\
+THU-EACT-50-CHL & $200\,\mathrm{ms}$ & $70{,}00\,\mathrm{ms}$ & da 20 a 285 & $3,6,11,23$ \\
 \hline
 \end{tabular}
 \end{adjustbox}

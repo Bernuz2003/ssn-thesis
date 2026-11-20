@@ -39,7 +39,7 @@ La tabella~\ref{tab:iperparametri_moduli} riassume gli iperparametri dei moduli 
 \centering
 \small
 \renewcommand{\arraystretch}{1.25}
-\caption[Iperparametri dei moduli e degli interventi]{Iperparametri dei moduli e degli interventi sull'addestramento dei capitoli~\ref{chap:memoria_relazionale} e~\ref{chap:scalabilita}.}
+\caption[Iperparametri dei moduli e degli interventi]{Iperparametri dei moduli e degli interventi sull'addestramento.}
 \label{tab:iperparametri_moduli}
 \begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{3.5cm} >{\raggedright\arraybackslash}X@{}}
 \hline
@@ -53,8 +53,8 @@ Memoria remota & media del passato più vecchio dell'ultima banda, con proiezion
 Memoria nella SSA & matrici $M_k$ e $G_k$ di $16\times16$ elementi per banda e per testa, otto teste, inizialmente nulle; bande e coefficienti di disponibilità dell'IRM \\
 Orologi locali & attività tipica $\hat a$ pari alla mediana pesata dagli eventi, stimata su 256 campioni di addestramento; tempo di attività con $s=1$ e $\gamma=1$; orologio appreso da $s=1$ e $\gamma=0$, con $s\in[1/4,4]$ e $\gamma\in[-2,2]$ \\
 Capacità & 128, 192 e 256 canali, rango della relazione invariato \\
-Relazioni locali & ultimo strato del frontend piramidale, prima del max-pooling, con 32, 48 o 64 canali; proiezione $1\times1$ a 16 componenti con inizializzazione ortogonale; spostamenti orizzontale, verticale e due diagonali; ritardi di 1, 2 e 4 passi; media $3\times3$ con passo 2; una proiezione di uscita per ritardo, inizialmente nulla \\
-Distillazione & quattro insegnanti congelati, cioè IRM con uno e con due milioni di parametri, modello di riferimento con due milioni e IRM compatto con discretizzazione stocastica; bersagli calcolati una sola volta prima dell'addestramento; temperatura $T=4$, peso $w=0{,}9$ \\
+Relazioni locali & ultimo strato del frontend, prima del max-pooling; proiezione a 16 componenti; quattro direzioni; ritardi di 1, 2 e 4 passi; media $3\times3$ con passo 2; uscite inizialmente nulle \\
+Distillazione & quattro insegnanti congelati (sezione~\ref{sec:distillazione}), bersagli precalcolati, temperatura $T=4$, peso $w=0{,}9$ \\
 Auto-ensemble & media mobile con momento $0{,}8$, temperatura $T=4$, peso crescente linearmente fino a $0{,}9$, bersaglio usato solo se la sua classe più probabile coincide con l'etichetta \\
 Discretizzazione stocastica & scala dei tempi log-uniforme in $[0{,}9;\,1{,}1]$ e fase della griglia uniforme entro un passo, solo in addestramento \\
 \hline
@@ -229,7 +229,7 @@ La tabella~\ref{tab:scan_locali} confronta l'IRM con e senza le relazioni locali
 \end{table}
 
 \paragraph{Coppie di parole simili su DVS-Lip}
-La tabella~\ref{tab:coppie_estese} riporta, per ciascuna delle 25 coppie di parole visivamente simili di DVS-Lip, il numero di clip del test ufficiale in cui una parola viene scambiata con l'altra della stessa coppia, in entrambi i versi, per i modelli della figura~\ref{fig:confusione_lip}. Le coppie sono ordinate secondo gli scambi del modello finale, e il totale coincide con gli scambi della figura. Le differenze fra modelli sulla singola coppia sono piccole e vanno lette con cautela, perché ogni coppia conta circa cento clip.
+La tabella~\ref{tab:coppie_estese} riporta, per ciascuna delle 25 coppie di parole visivamente simili di DVS-Lip, il numero di clip del test ufficiale in cui una parola viene scambiata con l'altra della stessa coppia, in entrambi i versi, per i modelli della figura~\ref{fig:errori_percorso}. Le coppie sono ordinate secondo gli scambi del modello finale, e il totale coincide con gli scambi riportati nella sezione~\ref{sec:errori}. Le differenze fra modelli sulla singola coppia sono piccole e vanno lette con cautela, perché ogni coppia conta circa cento clip.
 
 \begin{table}[ht]
 \centering

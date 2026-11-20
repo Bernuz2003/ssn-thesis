@@ -147,6 +147,7 @@ Il ramo aggiunge appena $6\,656$ parametri su circa mezzo milione, ma la sua mem
 \renewcommand{\arraystretch}{1.2}
 \caption[Relazioni locali prima del pooling, circa mezzo milione di parametri]{Relazioni locali prima del pooling, con circa mezzo milione di parametri. Valori in percentuale. L'asterisco indica una differenza di accuratezza significativa nel confronto appaiato con lo stesso modello senza relazioni locali. Su THU-EACT-50-CHL la variante è stata valutata soltanto sulla validazione.}
 \label{tab:relazioni_locali}
+\begin{adjustbox}{max width=\textwidth}
 \begin{tabular}{@{}l r r r r@{}}
 \hline
  & \multicolumn{2}{c}{\textbf{Validazione}} & \multicolumn{2}{c}{\textbf{Test ufficiale}} \\
@@ -163,6 +164,7 @@ IRM antisimmetrico & $69{,}2$ & $62{,}6$ & $66{,}0$ & $59{,}6$ \\
 \quad con relazioni locali & $69{,}2$ & $63{,}1$ & -- & -- \\
 \hline
 \end{tabular}
+\end{adjustbox}
 \end{table}
 
 \titoletto{Il risultato con mezzo milione di parametri}
@@ -230,7 +232,7 @@ Per ciascun dataset la sezione segue soltanto la variante emersa come migliore n
 \begin{figure}[t]
     \centering
     \includegraphics[width=\textwidth]{images/cap6/cap6_capacita.pdf}
-    \caption[Accuratezza sul test al crescere dei parametri]{Accuratezza sul test ufficiale al crescere dei parametri, in scala logaritmica, per il modello di riferimento e per la variante migliore di ciascun dataset, l'IRM con relazioni locali su DVS-Lip, anche distillato, e l'IRM su THU-EACT-50-CHL. Su THU-EACT-50-CHL con due milioni di parametri, media degli addestramenti ripetuti. I numeri indicano il margine della variante addestrata in modo standard sul modello di riferimento della stessa larghezza, in punti. La stella vuota indica il modello di riferimento con due milioni di parametri distillato con gli stessi quattro insegnanti, disegnato poco a sinistra della sua posizione.}
+    \caption[Accuratezza sul test al crescere dei parametri]{Accuratezza sul test ufficiale al crescere dei parametri, in scala logaritmica, per il modello di riferimento e per la variante migliore di ciascun dataset, l'IRM con relazioni locali su DVS-Lip, anche distillato, e l'IRM su THU-EACT-50-CHL. Su THU-EACT-50-CHL con due milioni di parametri, media degli addestramenti ripetuti.}
     \label{fig:capacita}
 \end{figure}
 
@@ -390,6 +392,7 @@ Le sezioni precedenti hanno fissato, sempre sulla validazione di sviluppo, le co
 \renewcommand{\arraystretch}{1.2}
 \caption[Configurazioni finali sul test ufficiale]{Configurazioni finali sul test ufficiale, valutato a posteriori. Valori in percentuale. Su THU-EACT-50-CHL con due milioni di parametri, media di tre addestramenti.}
 \label{tab:configurazioni_finali}
+\setlength{\tabcolsep}{4.5pt}
 \begin{tabular}{@{}l l r r r@{}}
 \hline
 \textbf{Budget} & \textbf{Configurazione} & \textbf{Parametri} & \textbf{Accuratezza} & \textbf{Macro-F1} \\
@@ -455,7 +458,7 @@ ViT-Tiny & ANN & $5{,}5$\,M & sì, DailyDVS-200 & $78{,}7$ & \cite{norrby2026eve
 \begin{figure}[t]
     \centering
     \includegraphics[width=\textwidth]{images/cap6/cap6_stato_arte.pdf}
-    \caption[Stato dell'arte su THU-EACT-50-CHL]{Accuratezza sul test ufficiale di THU-EACT-50-CHL in funzione dei parametri, in scala logaritmica, per i modelli di questa tesi e per i metodi pubblicati della tabella~\ref{tab:stato_arte_thu}. I triangoli indicano un pre-training su dati esterni a THU-EACT-50-CHL. Le due SNN pubblicate non dichiarano il numero di parametri, e la migliore è indicata dalla linea punteggiata.}
+    \caption[Stato dell'arte su THU-EACT-50-CHL]{Accuratezza sul test ufficiale di THU-EACT-50-CHL in funzione dei parametri, in scala logaritmica, per l'IRM antisimmetrico di questa tesi alle tre larghezze, con due milioni di parametri come media di tre addestramenti, e per i metodi pubblicati della tabella~\ref{tab:stato_arte_thu}. I triangoli indicano un pre-training su dati esterni a THU-EACT-50-CHL. Le due SNN pubblicate non dichiarano il numero di parametri, e la migliore è indicata dalla linea punteggiata.}
     \label{fig:stato_arte}
 \end{figure}
 
@@ -528,16 +531,23 @@ Il confronto sul test ufficiale richiede alcune cautele, a cominciare dal fatto 
 Le sezioni precedenti hanno mostrato quanto si possa guadagnare con la memoria relazionale, la capacità e la distillazione. Questa sezione guarda invece a ciò che resta, cioè agli errori che nessuna di queste leve corregge. Su DVS-Lip riguardano soprattutto due aspetti, le coppie di parole simili e le clip più brevi. Su entrambi i dataset ne riguardano un terzo, il ritmo con cui i movimenti vengono eseguiti.
 
 \titoletto{Le coppie di parole simili}
-Metà delle parole di DVS-Lip forma 25 coppie visivamente simili, come \emph{spend} e \emph{spent} o \emph{price} e \emph{press}, sulle quali si calcola Acc1 (sezione~\ref{subsec:dvslip}). La figura~\ref{fig:confusione_lip}a mostra gli errori del miglior modello finale sul test ufficiale, con le parole disposte in modo che le due di ciascuna coppia siano adiacenti. Gli errori fra parole simili si raccolgono in piccoli blocchi lungo la diagonale, dove una parola viene presa per la sua compagna. Nelle coppie più difficili accade a più di un terzo delle clip, come con \emph{price} e \emph{press}, \emph{happen} e \emph{happened} o \emph{benefit} e \emph{benefits}, mentre altre coppie, come \emph{terms} e \emph{times} o \emph{election} e \emph{action}, quasi non si confondono. Molte delle coppie difficili differiscono soltanto per una desinenza, cioè per un movimento breve e poco visibile alla fine della parola.
+Metà delle parole di DVS-Lip forma 25 coppie visivamente simili, come \emph{spend} e \emph{spent} o \emph{price} e \emph{press}, sulle quali si calcola Acc1 (sezione~\ref{subsec:dvslip}). La figura~\ref{fig:confusione_lip} mostra le risposte del modello finale sul test ufficiale per le dieci coppie che confonde di più e per venti delle altre parole, e nella prima le due parole di ciascuna coppia sono adiacenti. Gli errori fra parole simili formano così piccoli blocchi accanto alla diagonale, dove una parola viene presa per la sua compagna, mentre fra le altre parole gli errori sono più radi e dispersi. Nelle coppie più difficili accade a più di un terzo delle clip, come con \emph{price} e \emph{press}, \emph{happen} e \emph{happened} o \emph{benefit} e \emph{benefits}, mentre altre coppie, come \emph{terms} e \emph{times} o \emph{election} e \emph{action}, quasi non si confondono. Molte delle coppie difficili differiscono soltanto per una desinenza, cioè per un movimento breve e poco visibile alla fine della parola.
 
 \begin{figure}[t]
     \centering
     \includegraphics[width=\textwidth]{images/cap6/cap6_confusione_lip.pdf}
-    \caption[Errori sulle coppie di parole simili di DVS-Lip]{Errori sulle coppie di parole simili di DVS-Lip, sul test ufficiale. (a)~Errori del modello finale con due milioni di parametri, cioè l'IRM con relazioni locali e distillazione. Ogni riga è una parola pronunciata, e il colore indica la percentuale delle sue clip assegnate a ciascuna parola predetta. La diagonale, cioè le risposte corrette, è esclusa e in grigio. Le due parole di ciascuna coppia sono adiacenti, e gli scambi fra loro formano i blocchi lungo la diagonale nel riquadro in alto a sinistra. (b)~Clip sbagliate lungo il percorso dei modelli, divise in scambi fra le due parole di una coppia, altri errori sulle parole delle coppie ed errori sulle altre parole.}
+    \caption[Matrici di confusione del modello finale su DVS-Lip]{Matrici di confusione del modello finale di DVS-Lip con due milioni di parametri, cioè l'IRM con relazioni locali e distillazione, sul test ufficiale. Ogni riga è una parola pronunciata, ogni colonna una parola predetta, e il colore indica il numero di clip in scala logaritmica, con le risposte corrette sulla diagonale. (a)~Le dieci coppie di parole visivamente simili con più scambi, con le due parole di ciascuna coppia adiacenti, sicché gli scambi fra loro formano piccoli blocchi accanto alla diagonale. (b)~Le venti parole comuni con più errori verso altre parole comuni, in ordine alfabetico. Le predizioni verso parole che non compaiono nella matrice sono escluse.}
     \label{fig:confusione_lip}
 \end{figure}
 
-Lungo il percorso dei modelli (figura~\ref{fig:confusione_lip}b), relazioni locali, distillazione e capacità riducono di oltre un quarto gli errori verso parole diverse dalla compagna, sia fra le parole delle coppie sia fra le altre. Gli scambi dentro la coppia, invece, non scendono, e passano anzi da 442 nel modello di riferimento a 491 nel modello finale. Via via che la rete impara a riconoscere a quale coppia appartenga una parola, una quota crescente dei suoi errori residui si concentra proprio sulla scelta fra le due parole della coppia. Nemmeno le relazioni locali della sezione~\ref{sec:relazioni_locali}, pensate per i dettagli fini, riducono gli scambi, e anche il loro guadagno viene dagli altri errori. Il conteggio stabile non va letto come un limite invalicabile, perché i migliori lavori pubblicati superano su queste parole l'accuratezza dei nostri modelli di circa venti punti (tabella~\ref{tab:stato_arte_lip}). Indica però che le leve provate in questa tesi non toccano la distinzione più fine che il compito richiede.
+Lungo il percorso dei modelli (figura~\ref{fig:errori_percorso}), relazioni locali, distillazione e capacità riducono di oltre un quarto gli errori verso parole diverse dalla compagna, sia fra le parole delle coppie sia fra le altre. Gli scambi dentro la coppia, invece, non scendono, e passano anzi da 442 nel modello di riferimento a 491 nel modello finale. Via via che la rete impara a riconoscere a quale coppia appartenga una parola, una quota crescente dei suoi errori residui si concentra proprio sulla scelta fra le due parole della coppia. Nemmeno le relazioni locali della sezione~\ref{sec:relazioni_locali}, pensate per i dettagli fini, riducono gli scambi, e anche il loro guadagno viene dagli altri errori. Il conteggio stabile non va letto come un limite invalicabile, perché i migliori lavori pubblicati superano su queste parole l'accuratezza dei nostri modelli di circa venti punti (tabella~\ref{tab:stato_arte_lip}). Indica però che le leve provate in questa tesi non toccano la distinzione più fine che il compito richiede.
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=0.75\textwidth]{images/cap6/cap6_errori_percorso.pdf}
+    \caption[Errori su DVS-Lip lungo il percorso dei modelli]{Errori sul test ufficiale di DVS-Lip lungo il percorso dei modelli, in percentuale di quelli del modello di riferimento, divisi in scambi fra le due parole di una coppia, altri errori sulle parole delle coppie ed errori sulle altre parole. A destra, il numero di clip sbagliate dal modello finale.}
+    \label{fig:errori_percorso}
+\end{figure}
 
 \titoletto{Le clip più brevi}
 La seconda difficoltà riguarda la durata, e dividendo le clip in quattro gruppi secondo il numero di passi, dalle più brevi alle più lunghe, le prime risultano le più difficili per tutti i modelli (figura~\ref{fig:durata}). Sul test il modello di riferimento passa dal $40\%$ di accuratezza nel gruppo più breve al $64\%$ in quello più lungo. Il modello finale alza tutti i gruppi, quello più breve un po' di più, e arriva al $53$ e al $72\%$, ma il divario resta di circa venti punti sul test e di quindici in validazione.
@@ -545,7 +555,7 @@ La seconda difficoltà riguarda la durata, e dividendo le clip in quattro gruppi
 \begin{figure}[t]
     \centering
     \includegraphics[width=\textwidth]{images/cap6/cap6_durata.pdf}
-    \caption[Accuratezza su DVS-Lip per durata delle clip]{Accuratezza su DVS-Lip per durata delle clip, in quattro gruppi delimitati dai quartili del numero di passi, dal più breve al più lungo, lungo il percorso dei modelli. Il grigio indica il modello di riferimento, il blu chiaro l'IRM con relazioni locali con mezzo milione di parametri, il blu scuro il modello finale con due milioni, il tratteggio la distillazione.}
+    \caption[Accuratezza su DVS-Lip per durata delle clip]{Accuratezza su DVS-Lip per durata delle clip, in quattro gruppi delimitati dai quartili del numero di passi, dal più breve al più lungo, per il modello di riferimento e per il modello finale, cioè l'IRM con relazioni locali e distillazione, con mezzo milione, uno e due milioni di parametri.}
     \label{fig:durata}
 \end{figure}
 

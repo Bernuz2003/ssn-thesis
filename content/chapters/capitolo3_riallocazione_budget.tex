@@ -171,7 +171,7 @@ La sostituzione conviene sotto ogni aspetto, perché riduce parametri, moltiplic
 \begin{figure}[t]
     \centering
     \includegraphics[width=\textwidth]{images/cap3/cap3_percorso.pdf}
-    \caption[Dalla baseline al modello di riferimento su DVS-Lip]{Dalla baseline al modello di riferimento su DVS-Lip. Ogni passo aggiunge una modifica a quelli precedenti. (a)~Macro-F1 sulla validazione di sviluppo, con il guadagno di ciascun passo alla base delle barre. (b)~Costi per campione rispetto alla baseline. Le MAC comprendono quelle del mixer a ritardi, gli accumuli sono potenziali e la stima energetica è quella aritmetica della sezione~\ref{sec:caratterizzazione_computazionale}. Parametri, MAC e stima energetica, quasi sovrapposti, tornano alla fine sui valori della baseline, mentre stato e accumuli si riducono di circa la metà.}
+    \caption[Dalla baseline al modello di riferimento su DVS-Lip]{Dalla baseline al modello di riferimento su DVS-Lip. Ogni passo aggiunge una modifica a quelli precedenti. (a)~Macro-F1 sulla validazione di sviluppo, con il guadagno di ciascun passo alla base delle barre. (b)~Costi per campione dopo ciascun passo, in percentuale della baseline, con le riduzioni in blu e gli aumenti in arancio. Le MAC comprendono quelle del mixer a ritardi, gli accumuli sono potenziali e la stima energetica è quella aritmetica della sezione~\ref{sec:caratterizzazione_computazionale}. Parametri, MAC e stima energetica tornano alla fine sui valori della baseline, mentre stato e accumuli si riducono di circa la metà.}
     \label{fig:percorso_riferimento}
 \end{figure}
 
@@ -261,7 +261,7 @@ Ripetuta sugli altri dataset per il solo modello di riferimento (tabella~\ref{ta
 Dopo la sostituzione della Q-K Token Attention, la SSA del secondo stadio è l'unico operatore della rete che mette in relazione posizioni lontane. Il secondo stadio lavora su una griglia di $8\times8$ token, ciascuno dei quali descrive una porzione di $16\times16$ pixel dell'ingresso, e viene naturale chiedersi se anche qui, come nel primo stadio, un'operazione locale possa bastare. La domanda ha due versioni, che la sezione~\ref{sec:disegno_controlli} ha distinto. La prima riguarda il modello addestrato, e chiede quanto la sua decisione dipenda dalla SSA. La seconda riguarda l'architettura, e chiede se possa farne a meno.
 
 \paragraph{Test di necessità}
-Il test di necessità disattiva la SSA sul checkpoint del modello di riferimento, soltanto in inferenza. Il blocco del secondo stadio salta il ramo dell'attenzione, così che il flusso residuo raggiunge direttamente l'MLP, e tutti i pesi restano invariati. La tabella~\ref{tab:ssa_secondo_stadio} riporta il risultato, un collasso completo su tutti e tre i dataset esaminati. L'accuratezza scende all'$1{,}9\%$ su DVS-Lip, al $9{,}8\%$ su DVS128 Gesture e al $13{,}2\%$ su CIFAR10-DVS, valori prossimi a quelli di una risposta casuale, e su questi ultimi due dataset circa nove campioni su dieci vengono assegnati alla stessa classe. La decisione del modello addestrato passa dunque interamente per la SSA.
+Il test di necessità disattiva la SSA sul checkpoint del modello di riferimento, soltanto in inferenza. Il blocco del secondo stadio salta il ramo dell'attenzione, così che il flusso residuo raggiunge direttamente l'MLP, e tutti i pesi restano invariati. La tabella~\ref{tab:ssa_secondo_stadio} riporta il risultato, un collasso completo su tutti e quattro i dataset. L'accuratezza scende all'$1{,}9\%$ su DVS-Lip, al $9{,}8\%$ su DVS128 Gesture, al $13{,}2\%$ su CIFAR10-DVS e all'$8{,}3\%$ su THU-EACT-50-CHL, valori prossimi a quelli di una risposta casuale, e su DVS128 Gesture e CIFAR10-DVS circa nove campioni su dieci vengono assegnati alla stessa classe. La decisione del modello addestrato passa dunque interamente per la SSA.
 
 \paragraph{Test di sostituibilità}
 Il test di sostituibilità pone la domanda opposta, sostituendo la SSA con un mixer spaziale locale e addestrando il modello da zero. Il mixer applica in sequenza una convoluzione depthwise $3\times3$, un'espansione $1\times1$ che raddoppia i canali e una proiezione $1\times1$ che li riporta al valore originale, ciascuna seguita da normalizzazione e neuroni. Ha quasi gli stessi parametri della SSA, appena $1\,152$ in più, ma nessuna relazione tra posizioni lontane. Su DVS128 Gesture il modello così ottenuto supera di un punto quello con la SSA, su CIFAR10-DVS lo eguaglia, e in entrambi i casi esegue circa l'$8\%$ di moltiplicazioni in meno. Nella SSA, infatti, le proiezioni di Query, Key e Value leggono il flusso residuo, che non è binario, mentre nel mixer locale lo legge soltanto la convoluzione depthwise, che ha pochi pesi.
@@ -282,9 +282,9 @@ Su DVS-Lip e THU-EACT-50-CHL l'esito è opposto, perché il modello con il mixer
 DVS-Lip & $55{,}2$ & $0{,}3$ & n.d. \\
 DVS128 Gesture & $86{,}5$ & $3{,}6$ & $87{,}6$ \\
 CIFAR10-DVS & $67{,}8$ & $7{,}1$ & $67{,}8$ \\
-% TODO: test di necessità su THU-EACT-50-CHL (checkpoint E0_C0_M__20261011_092915_581860, solo sui server).
-% Quando arriva, aggiornare questa cella e il paragrafo "Il test di necessità..." (oggi "tutti e tre i dataset").
-THU-EACT-50-CHL & $45{,}6$ & in corso & n.d. \\
+% Test di necessita' su THU-EACT-50-CHL eseguito il 20/11/2026 su mustafar (checkpoint E0_C0_M__20261011_092915_581860,
+% artifacts/reports/necessity/thu_eact_50_chl): intatto 45,55 F1, SSA disattivata 2,73 F1 e 8,27% di accuratezza.
+THU-EACT-50-CHL & $45{,}6$ & $2{,}7$ & n.d. \\
 \hline
 \end{tabular}
 \end{table}
